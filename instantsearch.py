@@ -25,7 +25,7 @@ from zim.gui.widgets import ui_environment, MessageDialog, Dialog
 
 import logging
 
-logger = logging.getLogger('zim.plugins.typesearch')
+logger = logging.getLogger('zim.plugins.instantsearch')
 with open("/tmp/test.tmp","w+") as f:
     f.write(str(logger.manager.__dict__))
 
@@ -46,10 +46,10 @@ def delay(delay=0.):
         return delayed
     return wrap
 
-class TypesearchPlugin(PluginClass):
+class InstantsearchPlugin(PluginClass):
 
     plugin_info = {
-		'name': _('EDVARD'), # T: plugin name
+		'name': _('Instantsearch'), # T: plugin name
 		'description': _('''\
 XXX
 
@@ -61,14 +61,14 @@ XXX
 
 
 @extends('MainWindow')
-class TypesearchMainWindowExtension(WindowExtension):
+class InstantsearchMainWindowExtension(WindowExtension):
 
     uimanager_xml = '''
     <ui>
     <menubar name='menubar'>
             <menu action='tools_menu'>
                     <placeholder name='plugin_items'>
-                            <menuitem action='typesearch'/>
+                            <menuitem action='instantsearch'/>
                     </placeholder>
             </menu>
     </menubar>
@@ -79,8 +79,8 @@ class TypesearchMainWindowExtension(WindowExtension):
     gui = "";
 
 
-    @action(_('_Typesearch'), accelerator='<ctrl>e') # T: menu item
-    def typesearch(self):
+    @action(_('_Instantsearch'), accelerator='<ctrl>e') # T: menu item
+    def instantsearch(self):
         #with open("/tmp/test.tmp","w+") as f:
         #    f.write(str(self.window.__dict__))
         #    f.write(str(self.window.ui.__dict__))
@@ -96,7 +96,7 @@ class TypesearchMainWindowExtension(WindowExtension):
         self.matches = [] # XX lze sem dat recentne pouzite
 
         self.gui = Tk()
-        Label(self.gui, text="Typesearch (if 1st letter is !, search in page titles only):").pack()
+        Label(self.gui, text="Instantsearch (if 1st letter is !, search in page titles only):").pack()
         self.gui.bind('<Up>', self.move)
         self.gui.bind('<Down>', self.move)
         self.gui.bind('<Enter>', self.move)
@@ -270,4 +270,4 @@ class TypesearchMainWindowExtension(WindowExtension):
                 self.caret['pos'] = -1
                 self.query += key
         self.displayMenu()
-#Typesearch()
+#Instantsearch()
