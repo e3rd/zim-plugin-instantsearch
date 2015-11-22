@@ -25,11 +25,10 @@ from zim.gui.widgets import ui_environment, MessageDialog, Dialog
 
 import logging
 
-logger = logging.getLogger('zim.plugins.edvard')
+logger = logging.getLogger('zim.plugins.typesearch')
+with open("/tmp/test.tmp","w+") as f:
+    f.write(str(logger.manager.__dict__))
 
-
-#subprocess.Popen('xdotool key alt+Tab', shell=True)
-#subprocess.Popen('xdotool key U2132 &', shell=True)
 
 import threading
 from functools import wraps
@@ -47,10 +46,6 @@ def delay(delay=0.):
         return delayed
     return wrap
 
-
-#class PluginClass:
-#    pass
-
 class TypesearchPlugin(PluginClass):
 
     plugin_info = {
@@ -63,8 +58,6 @@ XXX
 		'author': "Edvard Rejthar"
 		#'help': 'Plugins:Due date',
 	}
-
-
 
 
 @extends('MainWindow')
@@ -88,39 +81,14 @@ class TypesearchMainWindowExtension(WindowExtension):
 
     @action(_('_Typesearch'), accelerator='<ctrl>e') # T: menu item
     def typesearch(self):
-        with open("/tmp/test.tmp","w+") as f:
-            f.write(str(self.window.__dict__))
-            f.write(str(self.window.ui.__dict__))
+        #with open("/tmp/test.tmp","w+") as f:
+        #    f.write(str(self.window.__dict__))
+        #    f.write(str(self.window.ui.__dict__))
             
           #DAT GUI WIDTH a pozicovat doprava:
             #self.window.windowpos': (0, 24),
             #self.window.windowsize. (1920, 1056),
             
-        #MessageDialog(self.ui, _(self.__dict__)).run()
-        
-        #self.opener.open_page("Journal")                
-        #launchInternal = False
-        #try:
-        #    print(termios.tcgetattr(sys.stdin))
-        #    launchInternal = True
-        #except:
-        #    process = subprocess.Popen('gnome-terminal --title=unisymbol -e unisymbol.py --hide-self.menubar --geometry=100x43+$X+$Y', shell=True,stdout=subprocess.PIPE)
-        #    #subprocess.Popen('notify-send ab ' +str(s),shell=True)
-            #time.sleep(0.5)
-            #subprocess.Popen('xdotool key U2132 &', shell=True) # && ', shell=True)
-       #     exit(0)
-
-        #if launchInternal:
-        #sys.stdout.write("\033c") #clear screen, je kdoviproc necim zaneradena
-
-        #funkce na read stdin
-        #def getkey():
-        #    old_settings = termios.tcgetattr(sys.stdin)
-        #    tty.setraw(sys.stdin.fileno())
-        #    select.select([sys.stdin], [], [], 0)
-        #    answer = sys.stdin.read(1)
-        #    termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_settings)
-        #    return answer
 
         #init
         self.query = "" #prikaz uzivatele
@@ -128,16 +96,14 @@ class TypesearchMainWindowExtension(WindowExtension):
         self.matches = [] # XX lze sem dat recentne pouzite
 
         self.gui = Tk()
-        Label(self.gui, text="Zim typesearch:").pack()
+        Label(self.gui, text="Typesearch (if 1st letter is !, search in page titles only):").pack()
         self.gui.bind('<Up>', self.move)
         self.gui.bind('<Down>', self.move)
         self.gui.bind('<Enter>', self.move)
         self.gui.bind('<Return>', self.move)
-        #main.bind('<Right>', self.rightKey)
         self.inputText = StringVar()
         self.inputText.trace("w", self.change)
         self.entry = Entry(self.gui, width=40, textvariable=self.inputText)
-        #self.entry.bind("<<Change>>", self.change)
         self.entry.pack()
         self.entry.focus_set()
         self.labelText = StringVar()
@@ -173,29 +139,29 @@ class TypesearchMainWindowExtension(WindowExtension):
 
 
         #self.queryTime = int(round(time.time() * 1000))
-        self.search(self.query)
+        queryCheck = self.query
+        self.gui.after(200, lambda: self.search(queryCheck))
 
-    @delay(0.2)
+    #@delay(0.2)
     def search(self,queryCheck):
         if self.query == "" or queryCheck != self.query: #mezitim jsme pripsali dalsi pismenko
+            print("STORNO")
             return
+        else:
+            print("NON STORNO",self.query,queryCheck)
+            #return
         #print millis
         #print("\x1B[3m" + (self.query if self.query else " ** character description **") + "\x1B[23m")# italikem vypsat prikaz
         self.menu = [] #mozne prikazy uzivatele
         self.caret['altPos'] = 0 #mozne umisteni karetu - na zacatek
 
-        call = "zim --search Notes '*" + self.query + "'"
+        call = "zim --search Notes '*" + self.query + "*'"
         print(call)
         process = subprocess.Popen(call, stdout=subprocess.PIPE, shell=True)            
         self.matches = str(process.communicate()[0]).split("\n")[:-1] #, "utf-8"
 
         print("matches",self.matches)
         for option in self.matches:
-            print("skip?")
-            print("query:")
-            print(self.query)
-            print("not in" ,option)
-            print("result:",(self.query not in option))
             if self.pageTitleOnly and self.query not in option: # hledame jen v nazvu stranky
                 continue
 
@@ -225,16 +191,7 @@ class TypesearchMainWindowExtension(WindowExtension):
                     text += item[0:-1] + "\n"
 
         self.labelText.set(text)
-        #self.listbox.configure(test) #text
-
-        #vybrana 1 moznost ke spusteni
-            #sys.stdout.write("\033c");#clear terminal
-            #c = self.menu[0]
-            #sys.stdout.write("\x1b]0;" + self.menu[0] + "\x07") #gnome-terminal title
-            #result = self.menu[0].split(" ")[-1] # + result
-            #print(result)
-            #print(hex(ord(result)).split('x')[1])
-            #spusti podproces, odpoji ho od terminalu. Ten balast na konci je pro silent start nohupu.
+        
         page = self.caret['text']
         if page and page != self.lastPage:
             self.lastPage = page
@@ -250,20 +207,12 @@ class TypesearchMainWindowExtension(WindowExtension):
         print("len", len(self.menu))
         print("len?", len(self.menu) == 1)
         if len(self.menu) == 1:
-            #print("END aa")
-            self.window.ui.open_page(Path(page))
-            self.gui.destroy()
+            if self.lastPage != page:
+                self.window.ui.open_page(Path(page))
+            self.gui.after(200, lambda: self.gui.destroy()) # kdyz se zaviralo hned, Python hazel allocation error
             #self.gui.quit()
             pass
             #subprocess.Popen('wmctrl -a zim', shell=True)
-            #sys.exit(0)
-            #ihned skoncit, at muzu dal psat time.sleep(0.5)
-            #time.sleep(0.5) # xdotool musi mit cas se napsat -> kdyz skoncim moc brzo, xdotool se nepovede. Zatim je to tahle klicka.
-            #getkey()
-            #exit(0)
-            #sys._exit(0)
-            #pass
-        #sys.stdout.write("\033c") #clear screen
 
     def move(self,event):
         if event.keysym == "Up":
@@ -321,3 +270,4 @@ class TypesearchMainWindowExtension(WindowExtension):
                 self.caret['pos'] = -1
                 self.query += key
         self.displayMenu()
+#Typesearch()
