@@ -1,9 +1,8 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 #
-# Search as you Type
+# Search instantly as you Type. Edvard Rejthar
 #
-#importy
 import ConfigParser
 from Tkinter import Tk, Entry, Label, StringVar
 import re
@@ -15,7 +14,6 @@ import time
 import tty
 import time
 
-
 import gtk
 
 from zim.plugins import PluginClass, extends, WindowExtension
@@ -26,25 +24,6 @@ from zim.gui.widgets import ui_environment, MessageDialog, Dialog
 import logging
 
 logger = logging.getLogger('zim.plugins.instantsearch')
-with open("/tmp/test.tmp","w+") as f:
-    f.write(str(logger.manager.__dict__))
-
-
-import threading
-from functools import wraps
-
-
-def delay(delay=0.):
-    """
-    Decorator delaying the execution of a function for a while. (http://fredericiana.com/2014/11/14/settimeout-python-delay/)
-    """
-    def wrap(f):
-        @wraps(f)
-        def delayed(*args, **kwargs):
-            timer = threading.Timer(delay, f, args=args, kwargs=kwargs)
-            timer.start()
-        return delayed
-    return wrap
 
 class InstantsearchPlugin(PluginClass):
 
@@ -81,9 +60,21 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
     @action(_('_Instantsearch'), accelerator='<ctrl>e') # T: menu item
     def instantsearch(self):
-        #with open("/tmp/test.tmp","w+") as f:
-        #    f.write(str(self.window.__dict__))
-        #    f.write(str(self.window.ui.__dict__))
+        #print("EDVAAAAAAAAARD")
+        #print(str(self.window.ui.pageview))
+        #print(str(self.window.ui.pageview.__dict__))
+        
+
+        #with open("/tmp/test.js","w") as f:
+            #f.write(str(x+w-200))
+            #f.write(str(self.window.windowpos[0]))
+            #f.write(str(self.window.windowpos[0] + self.window.windowsize[0] - 200))
+            #f.write("start")
+            #f.write(str(self.window.__dict__))
+            #f.write("\nsecond")
+            #f.write(str(self.window.ui.__dict__))
+            #f.write("\n\n\nthird")
+            #f.write(str(self.window.ui.page.name))
             
           #DAT GUI WIDTH a pozicovat doprava:
             #self.window.windowpos': (0, 24),
@@ -91,9 +82,10 @@ class InstantsearchMainWindowExtension(WindowExtension):
             
 
         #init
-        self.query = "" #prikaz uzivatele
-        self.caret = {'pos':0, 'altPos':0, 'text':""}  #pozice kurzoru
-        self.matches = [] # XX lze sem dat recentne pouzite
+        self.query = "" # user input
+        self.caret = {'pos':0, 'altPos':0, 'text':""}  # cursor position
+        #self.matches = [] # XX lze sem dat recentne pouzite
+        self.originalPage = self.window.ui.page.name # we return here after escape
 
         self.gui = Tk()
         Label(self.gui, text="Instantsearch (if 1st letter is !, search in page titles only):").pack()
@@ -101,19 +93,28 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.gui.bind('<Down>', self.move)
         self.gui.bind('<Enter>', self.move)
         self.gui.bind('<Return>', self.move)
+        self.gui.bind('<Escape>', self.move)
+
+        # input text
         self.inputText = StringVar()
         self.inputText.trace("w", self.change)
         self.entry = Entry(self.gui, width=40, textvariable=self.inputText)
         self.entry.pack()
         self.entry.focus_set()
+
+        # output text
         self.labelText = StringVar()
         self.label = Label(self.gui, textvariable = self.labelText, justify = "left")
         self.label.pack()
 
+        #gui geometry
+        x,y = self.window.uistate.get("windowpos")
+        w,h = self.window.uistate.get("windowsize")
+        #with open("/tmp/test.js","w") as f:
+        #    f.write(str(x) + " " + str((x+w-200)))
+        self.gui.geometry('+%d+0' % (x+w-200))
         #self.gui.wm_attributes("-topmost", 1)
 
-        self.gui.bind('<Up>', self.move) # XXX
-        self.gui.bind('<Down>', self.move) # XXX
         self.gui.mainloop()
 
     
@@ -137,21 +138,16 @@ class InstantsearchMainWindowExtension(WindowExtension):
         else:
             self.pageTitleOnly = False
 
-
-        #self.queryTime = int(round(time.time() * 1000))
         queryCheck = self.query
-        self.gui.after(200, lambda: self.search(queryCheck))
+        self.gui.after(100, lambda: self.search(queryCheck))
 
-    #@delay(0.2)
     def search(self,queryCheck):
-        if self.query == "" or queryCheck != self.query: #mezitim jsme pripsali dalsi pismenko
+        if self.query == "" or queryCheck != self.query: # meanwhile, we added another letter
             print("STORNO")
             return
         else:
             print("NON STORNO",self.query,queryCheck)
-            #return
-        #print millis
-        #print("\x1B[3m" + (self.query if self.query else " ** character description **") + "\x1B[23m")# italikem vypsat prikaz
+
         self.menu = [] #mozne prikazy uzivatele
         self.caret['altPos'] = 0 #mozne umisteni karetu - na zacatek
 
@@ -209,10 +205,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
         if len(self.menu) == 1:
             if self.lastPage != page:
                 self.window.ui.open_page(Path(page))
-            self.gui.after(200, lambda: self.gui.destroy()) # kdyz se zaviralo hned, Python hazel allocation error
-            #self.gui.quit()
-            pass
-            #subprocess.Popen('wmctrl -a zim', shell=True)
+            self.close()
 
     def move(self,event):
         if event.keysym == "Up":
@@ -227,47 +220,13 @@ class InstantsearchMainWindowExtension(WindowExtension):
             #exit(0)
             pass
 
+        if event.keysym == "Escape":
+            self.window.ui.open_page(Path(self.originalPage))
+            self.close()
+
         self.displayMenu()
         return
 
-        # tadyto jsem vubec neudelal
-        #res.configure(text = "levo!!")
-        #vyhodnotit moznost
-        if len(self.menu) != 1: #stale mame vic moznosti
-            key = getkey()
-
-            if ord(key) == 27: #escape sequence
-                print("Hit escape for exit...") #pokud jsem predtim napsal sipku, dalsi 2 znaky automaticky cekaji
-                key = getkey()
-                if ord(key) == 27: #dvojity escape - ukonceni
-                    exit()
-                elif ord(key) == 91: #sipka
-                    key = getkey()
-                    if ord(key) == 65: #sipka nahoru
-                        self.caret['pos'] -= 1
-                    if ord(key) == 66: #sipka dolu
-                        self.caret['pos'] += 1
-                elif ord(key) == 79: #home/end
-                    key = getkey()
-                    if ord(key) == 72: #home
-                        self.caret['pos'] = 0
-                    if ord(key) == 70: #end
-                        self.caret['pos'] = len(self.menu) -1
-                else:
-                    print("NIC!")
-            #elif(key == '\x08' or key == '\x7f'):#backspace
-            #    self.caret['pos'] = -1
-            #    self.query = self.query[:-1]
-            elif(ord(key) == 13): #enter
-                self.menu = [self.menu[self.caret['pos']]] #launch command at caret
-            #elif(key == '\x03' or key == '\x04'):#interrupt  (zel nefunguje)
-            #    exit()
-            elif(49 <= ord(key) <= 57):#cisla spousti prikaz na danem radku
-                self.menu = [self.menu[ord(key)-49]]
-                #query = self.menu[ord(key)-49] #launch command at number
-            else:
-                print("ZDE")
-                self.caret['pos'] = -1
-                self.query += key
-        self.displayMenu()
-#Instantsearch()
+    ## Safely closes
+    def close(self):
+        self.gui.after(200, lambda: self.gui.destroy()) # when closing directly, Python gave allocation error
