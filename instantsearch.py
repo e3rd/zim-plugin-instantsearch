@@ -4,7 +4,13 @@
 # Search instantly as you Type. Edvard Rejthar
 #
 import ConfigParser
-from Tkinter import Tk, Entry, Label, StringVar
+from Tkinter import Entry
+from Tkinter import Label
+from Tkinter import StringVar
+from Tkinter import Tk
+from collections import defaultdict
+import gtk
+import logging
 import re
 import select
 import subprocess
@@ -12,31 +18,32 @@ import sys
 import termios
 import time
 import tty
-import time
-
-import gtk
-
-from zim.plugins import PluginClass, extends, WindowExtension
 from zim.actions import action
+from zim.gui.widgets import Dialog
+from zim.gui.widgets import MessageDialog
+from zim.gui.widgets import ui_environment
 from zim.notebook import Path
-from zim.gui.widgets import ui_environment, MessageDialog, Dialog
+from zim.plugins import PluginClass
+from zim.plugins import WindowExtension
+from zim.plugins import extends
+from zim.search import *
 
-import logging
+print("test")
 
 logger = logging.getLogger('zim.plugins.instantsearch')
 
 class InstantsearchPlugin(PluginClass):
 
     plugin_info = {
-		'name': _('Instantsearch'), # T: plugin name
-		'description': _('''\
+        'name': _('Instantsearch'), # T: plugin name
+        'description': _('''\
 XXX
 
 (V0.1)
 '''), # T: plugin description
-		'author': "Edvard Rejthar"
-		#'help': 'Plugins:Due date',
-	}
+        'author': "Edvard Rejthar"
+        #'help': 'Plugins:Due date',
+    }
 
 
 @extends('MainWindow')
@@ -54,13 +61,18 @@ class InstantsearchMainWindowExtension(WindowExtension):
     </ui>
     '''
 
+    # XXX 
+    # moznost zvolit dobu mezi keystrokes,
+    # pocet pismen po kterem vyhledat prvni search (ted je default 3 písmena),
+    # změnit "!" pro heading titles,
+    # řadit headings nad ostatní výsledky
+
 
     gui = "";
 
 
     @action(_('_Instantsearch'), accelerator='<ctrl>e') # T: menu item
-    def instantsearch(self):
-        #print("EDVAAAAAAAAARD")
+    def instantsearch(self):        
         #print(str(self.window.ui.pageview))
         #print(str(self.window.ui.pageview.__dict__))
         
@@ -76,13 +88,14 @@ class InstantsearchMainWindowExtension(WindowExtension):
             #f.write("\n\n\nthird")
             #f.write(str(self.window.ui.page.name))
             
-          #DAT GUI WIDTH a pozicovat doprava:
+        #DAT GUI WIDTH a pozicovat doprava:
             #self.window.windowpos': (0, 24),
             #self.window.windowsize. (1920, 1056),
             
 
         #init
-        self.query = "" # user input
+        self.input = "" # user input
+        self.query = None
         self.caret = {'pos':0, 'altPos':0, 'text':""}  # cursor position
         #self.matches = [] # XX lze sem dat recentne pouzite
         self.originalPage = self.window.ui.page.name # we return here after escape
@@ -104,67 +117,106 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
         # output text
         self.labelText = StringVar()
-        self.label = Label(self.gui, textvariable = self.labelText, justify = "left")
+        self.label = Label(self.gui, textvariable=self.labelText, justify="left")
         self.label.pack()
 
         #gui geometry
-        x,y = self.window.uistate.get("windowpos")
-        w,h = self.window.uistate.get("windowsize")
+        x, y = self.window.uistate.get("windowpos")
+        w, h = self.window.uistate.get("windowsize")
         #with open("/tmp/test.js","w") as f:
         #    f.write(str(x) + " " + str((x+w-200)))
-        self.gui.geometry('+%d+0' % (x+w-200))
+        self.gui.geometry('+%d+0' % (x + w-200))
         #self.gui.wm_attributes("-topmost", 1)
-
+        self.scores = defaultdict(int)
         self.gui.mainloop()
 
     
-    lastQuery = ""
+    lastInput = ""
     lastPage = ""
     pageTitleOnly = False
     menu = []
     #queryTime = 0    
 
-    def change(self,one, two, text):
-        self.query = self.inputText.get() #self.entry.get() + event.char
+    def change(self, one, two, text):        
+        self.input = self.inputText.get() #self.entry.get() + event.char
 
-        if len(self.query) < 3 or self.query == self.lastQuery:
+        if len(self.input) < 3 or self.input == self.lastInput:
             return
 
-        self.lastQuery = self.query
+        self.lastInput = self.input
 
-        if self.query[:1] == "!": #prvni znak vykricnik - hleda se nazev stranky
+        if self.input[:1] == "!": #prvni znak vykricnik - hleda se nazev stranky
             self.pageTitleOnly = True
-            self.query = self.query[1:]
+            self.input = self.input[1:]
         else:
             self.pageTitleOnly = False
 
-        queryCheck = self.query
-        self.gui.after(100, lambda: self.search(queryCheck))
+        queryCheck = self.input
+        self.gui.after(150, lambda: self.search(queryCheck)) # ideal delay between keystrokes
 
-    def search(self,queryCheck):
-        if self.query == "" or queryCheck != self.query: # meanwhile, we added another letter
-            print("STORNO")
+    def search(self, queryCheck):
+        if self.input == "" or queryCheck != self.input: # meanwhile, we added another letter → cancel search
+            print("CANCEL ",self.input)
             return
         else:
-            print("NON STORNO",self.query,queryCheck)
+            print("RUN QUERY ", self.input, queryCheck)
 
-        self.menu = [] #mozne prikazy uzivatele
+        self.menu = defaultdict(_MenuItem) #mozne prikazy uzivatele
         self.caret['altPos'] = 0 #mozne umisteni karetu - na zacatek
+        
+        s = '"*' + self.input + '*"'
+        print(s)
+        self.query = Query(s)
+        #self.scores = defaultdict(int)
+        
+        SearchSelection(self.window.ui.notebook).search(self.query, callback=self._search_callback)
+        if len(self.menu) == 1:
+            for page in self.menu:
+                self._open_page(Path(page))
+                break # first only, jak se to dela jinak?
+            self.close()
+        self.displayMenu()
 
-        call = "zim --search Notes '*" + self.query + "*'"
-        print(call)
-        process = subprocess.Popen(call, stdout=subprocess.PIPE, shell=True)            
-        self.matches = str(process.communicate()[0]).split("\n")[:-1] #, "utf-8"
+        #self._search_callback(results)
 
-        print("matches",self.matches)
-        for option in self.matches:
-            if self.pageTitleOnly and self.query not in option: # hledame jen v nazvu stranky
+        #call = "zim --search Notes '*" + self.input + "*'"
+        #print(call)
+        #process = subprocess.Popen(call, stdout=subprocess.PIPE, shell=True)
+
+
+    def _search_callback(self, results, path):
+        # Returning False will cancel the search
+        #~ print '!! CB', path
+        if results is not None:
+            self._update_results(results)
+
+        while gtk.events_pending():
+            gtk.main_iteration(block=False)
+
+        return True
+
+    updateI = 0
+
+    def _update_results(self, results):
+        self.updateI += 1
+        #print("UPDATE", self.updateI)
+        #self.matches = str(process.communicate()[0]).split("\n")[:-1] #, "utf-8"        
+        for option in results.scores:
+            if self.pageTitleOnly and self.input not in option.name: # hledame jen v nazvu stranky
                 continue
 
-            self.menu.append(option) #zaradit mezi moznosti
-            if option == self.caret['text']: #karet byl na tehle pozici, pokud se zuzil vyber, budeme vedet, kam karet opravne umistit
+            if option.name in self.menu: # we ignore 'score'
+                continue
+
+            #results.scores[option]
+            #print("SCORES")
+            self.scores[option.name] += 1
+            #print(self.scores)
+            self.menu[option.name].score = results.scores[option] #zaradit mezi moznosti
+            if option.name == self.caret['text']: #karet byl na tehle pozici, pokud se zuzil vyber, budeme vedet, kam karet opravne umistit
                 self.caret['altPos'] = len(self.menu)-1
-        self.displayMenu()
+        #self.displayMenu()
+
 
     def displayMenu(self):
         #osetrit vychyleni karetu
@@ -175,39 +227,30 @@ class InstantsearchMainWindowExtension(WindowExtension):
         #print("caret:" + str(caret['pos']))
 
         text = ""
-        for i,item in enumerate(self.menu):
+        for i, item in enumerate(self.menu):
             if i == self.caret['pos']: #karet je na pozici
                 self.caret['text'] = item
-                text += '*' + item + "\n"#vypsat moznost tucne
+                text += '*' + item + " ("+ str(self.menu[item].score) + ")\n"#vypsat moznost tucne
             else:
                 try:
-                    text += item + "\n"
+                    text += item + " ("+ str(self.menu[item].score) + ")\n"
                 except:
                     text += "CHYBA\n"
                     text += item[0:-1] + "\n"
 
         self.labelText.set(text)
-        
-        page = self.caret['text']
-        if page and page != self.lastPage:
-            self.lastPage = page
-            print("page",page)
+                        
             #subprocess.Popen('zim Notes "'+page+'"', shell=True)
-            self.window.ui.open_page(Path(page))
+        page = self.caret['text']
+        self._open_page(Path(page))
             
             # krade focus po pet vterin, abych mezitim mel nahledy otevrenych oken zimu;
             #  jestli z toho bude plugin, tak tahle kulisarna snad zmizi, protoze si bude se zimem povidat interne
             #for i in range(50,5000,50):
             #    self.gui.after(i, lambda: self.entry.focus_force())
 
-        print("len", len(self.menu))
-        print("len?", len(self.menu) == 1)
-        if len(self.menu) == 1:
-            if self.lastPage != page:
-                self.window.ui.open_page(Path(page))
-            self.close()
-
-    def move(self,event):
+        
+    def move(self, event):
         if event.keysym == "Up":
             self.caret['pos'] -= 1
 
@@ -215,18 +258,35 @@ class InstantsearchMainWindowExtension(WindowExtension):
             self.caret['pos'] += 1
 
         if event.keysym == "Enter" or event.keysym == "Return":
-            #self.menu = [self.menu[self.caret['pos']]] #launch command at caret
-            self.gui.destroy()
-            #exit(0)
-            pass
+            self.gui.destroy() # page has been opened when the menu item was accessed by the caret
 
         if event.keysym == "Escape":
-            self.window.ui.open_page(Path(self.originalPage))
+            self._open_page(Path(self.originalPage))
             self.close()
 
         self.displayMenu()
         return
 
     ## Safely closes
+    # when closing directly, Python gave allocation error
     def close(self):
-        self.gui.after(200, lambda: self.gui.destroy()) # when closing directly, Python gave allocation error
+        self.gui.after(200, lambda: self.gui.destroy())
+
+    # open page and highlight matches
+    def _open_page(self, page):
+        if page and page.name and page.name != self.lastPage:
+            self.lastPage = page.name
+            print("page", page.name)
+            self.window.ui.open_page(page)
+            # Popup find dialog with same query
+            if self.query:# and self.query.simple_match:
+                string = self.input#self.query.simple_match
+                string = string.strip('*') # support partial matches
+                self.window.ui.mainwindow.pageview.show_find(string, highlight=True)
+
+
+# menu = defaultdict(_Menu)
+class _MenuItem(set):
+    def __init__(self):
+        self.path = None
+        self.score = None
