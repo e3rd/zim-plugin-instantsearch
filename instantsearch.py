@@ -5,10 +5,8 @@
 # https://github.com/e3rd/zim-plugin-instantsearch
 #
 import ConfigParser
-from Tkinter import Entry
-from Tkinter import Label
-from Tkinter import StringVar
-from Tkinter import Tk
+from Tkinter import Entry, Label, StringVar, Tk
+import Tkinter
 from collections import defaultdict
 import gtk
 import logging
@@ -81,18 +79,15 @@ class InstantsearchMainWindowExtension(WindowExtension):
         with open("/tmp/test.js","w") as f:
             #f.write(str(self.window.ui.notebook.index.list_pages(Path(':')))+"\n")
             for s in self.window.ui.notebook.index.list_pages(Path(':')):
-                #f.write(str(s)+"\n")
-                #f.write(str(s.basename)+"\n")
                 self.cached_titles.append(s.basename)
-                    #f.write(str(self.window.ui.notebook.get_pagelist(Path(s.basename))))
                 for s2 in self.window.ui.notebook.get_pagelist(Path(s.basename)):
-                    #f.write(str(s2)+"\n")
-                    #f.write(str(s2.basename)+"\n")
                     self.cached_titles.append(s.basename+":"+s2.basename)
                     for s3 in self.window.ui.notebook.get_pagelist(Path(s.basename+":"+s2.basename)):
-                    #f.write(str(s2)+"\n")
-                    #f.write(str(s2.basename)+"\n")
                         self.cached_titles.append(s.basename+":"+s2.basename+":"+s3.basename)
+                        for s4 in self.window.ui.notebook.get_pagelist(Path(s.basename+":"+s2.basename+":"+s3.basename)):
+                            self.cached_titles.append(s.basename+":"+s2.basename+":"+s3.basename+":"+s4.basename)
+                            for s5 in self.window.ui.notebook.get_pagelist(Path(s.basename+":"+s2.basename+":"+s3.basename+":"+s4.basename)):
+                                self.cached_titles.append(s.basename+":"+s2.basename+":"+s3.basename+":"+s4.basename+":"+s5.basename)
             f.write(str(self.cached_titles))
 
             #        f.write(" -"+str(s2)+"\n")
@@ -129,7 +124,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.selection = None
 
         self.gui = Tk()
-        Label(self.gui, text="Instantsearch").pack()
+        Label(self.gui, text="Instantsearch").grid(row=1,column=1, sticky = Tkinter.W)
         self.gui.bind('<Up>', self.move)
         self.gui.bind('<Down>', self.move)
         self.gui.bind('<Enter>', self.move)
@@ -139,22 +134,22 @@ class InstantsearchMainWindowExtension(WindowExtension):
         # input text
         self.inputText = StringVar()
         self.inputText.trace("w", self.change)
-        self.entry = Entry(self.gui, width=40, textvariable=self.inputText)
-        self.entry.pack()
+        self.entry = Entry(self.gui, width=60, textvariable=self.inputText)
+        self.entry.grid(row=2,column=1, sticky = Tkinter.W)
         self.entry.focus_set()
 
         # output text
         self.labelText = ""
         self.labelVar = StringVar()
         self.label = Label(self.gui, textvariable=self.labelVar, justify="left")
-        self.label.pack()
+        self.label.grid(row=3,column=1, sticky = Tkinter.W)
 
         #gui geometry
         x, y = self.window.uistate.get("windowpos")
         w, h = self.window.uistate.get("windowsize")
         #with open("/tmp/test.js","w") as f:
         #    f.write(str(x) + " " + str((x+w-200)))
-        self.gui.geometry('+%d+0' % (x + w-200))
+        self.gui.geometry('+%d+0' % (x + w-300))
         #self.gui.wm_attributes("-topmost", 1)
         self.scores = defaultdict(int)
         self.gui.mainloop()
@@ -185,12 +180,15 @@ class InstantsearchMainWindowExtension(WindowExtension):
         found = 0
         for item in self.cached_titles: # quick search in titles
             p = item.find(self.input) # if we search in titles, we want the title to start with the query
+            print("item: ",item, p)
             if p == 0 or item[p-1] == ":": # 'te' matches 'test' or 'Journal:test'
+                print("FOUND")
                 self.menu[item].score = 1
                 self.menu[item].isTitle = True
                 found += 1
                 if found >= 10: # vic nez 10 vysledku nechceme, snadno tam budeme mit vsechny
                     break
+
         self.displayMenu() # zobrazit aspon vysledky hledani v titlech
 
         if len(self.input) >= self.start_search_length:
@@ -277,7 +275,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
         
 
         
-        newlist = sorted(self.menu, reverse = True, key=lambda item: (self.menu[item].isTitle, self.menu[item].score, item))
+        newlist = sorted(self.menu, reverse = True, key=lambda item: (self.menu[item].isTitle, self.menu[item].score, -item.count(":"),item))
         print(" ********** \n\n\n")
         print("menu")
         print(str(self.menu))
