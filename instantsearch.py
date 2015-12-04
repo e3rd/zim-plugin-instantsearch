@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 #
 # Search instantly as you Type. Edvard Rejthar
+# https://github.com/e3rd/zim-plugin-instantsearch
 #
 import ConfigParser
 from Tkinter import Entry
@@ -28,22 +29,31 @@ from zim.plugins import WindowExtension
 from zim.plugins import extends
 from zim.search import *
 
-print("test")
-
 logger = logging.getLogger('zim.plugins.instantsearch')
 
 class InstantsearchPlugin(PluginClass):
 
     plugin_info = {
-        'name': _('Instantsearch'), # T: plugin name
+        'name': _('Instant Search'), # T: plugin name
         'description': _('''\
-XXX
+Instant search allows you to filter as you type feature known from I.E. OneNote.
+When you hit Ctrl+E, small window opens, in where you can type.
+As you type third letter, every page that matches your search is listed.
+You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to cancel. Much quicker than current Zim search.
 
-(V0.1)
-'''), # T: plugin description
+(V0.2)
+'''),
         'author': "Edvard Rejthar"
         #'help': 'Plugins:Due date',
     }
+
+    plugin_preferences = (
+		# T: label for plugin preferences dialog
+                ('title_match_char', 'string', _('Match title with query starting with the char'), "!"),
+                ('start_search_length', 'int', _('Start the search when number of letters written'), 3),
+                ('keystroke_delay', 'int', _('Keystroke delay'), 150),
+		# T: plugin preference
+	)
 
 
 @extends('MainWindow')
@@ -61,22 +71,14 @@ class InstantsearchMainWindowExtension(WindowExtension):
     </ui>
     '''
 
-    # XXX 
-    # moznost zvolit dobu mezi keystrokes,
-    # pocet pismen po kterem vyhledat prvni search (ted je default 3 písmena),
-    # změnit "!" pro heading titles,
-    # řadit headings nad ostatní výsledky
-
 
     gui = "";
 
-
     @action(_('_Instantsearch'), accelerator='<ctrl>e') # T: menu item
-    def instantsearch(self):        
-        #print(str(self.window.ui.pageview))
-        #print(str(self.window.ui.pageview.__dict__))
+    def instantsearch(self):
         
-
+        #print(str(self.window.ui.pageview))
+        #print(str(self.window.ui.pageview.__dict__))    
         #with open("/tmp/test.js","w") as f:
             #f.write(str(x+w-200))
             #f.write(str(self.window.windowpos[0]))
@@ -86,12 +88,16 @@ class InstantsearchMainWindowExtension(WindowExtension):
             #f.write("\nsecond")
             #f.write(str(self.window.ui.__dict__))
             #f.write("\n\n\nthird")
-            #f.write(str(self.window.ui.page.name))
-            
+            #f.write(str(self.window.ui.page.name))            
         #DAT GUI WIDTH a pozicovat doprava:
             #self.window.windowpos': (0, 24),
             #self.window.windowsize. (1920, 1056),
             
+
+        # preferences
+        self.title_match_char = self.plugin.preferences['title_match_char']
+        self.start_search_length = self.plugin.preferences['start_search_length']
+        self.keystroke_delay = self.plugin.preferences['keystroke_delay']
 
         #init
         self.input = "" # user input
@@ -140,19 +146,19 @@ class InstantsearchMainWindowExtension(WindowExtension):
     def change(self, one, two, text):        
         self.input = self.inputText.get() #self.entry.get() + event.char
 
-        if len(self.input) < 3 or self.input == self.lastInput:
+        if len(self.input) < self.start_search_length or self.input == self.lastInput:
             return
 
         self.lastInput = self.input
 
-        if self.input[:1] == "!": #prvni znak vykricnik - hleda se nazev stranky
+        if self.input[:len(self.title_match_char)] == self.title_match_char: #prvni znak vykricnik - hleda se nazev stranky
             self.pageTitleOnly = True
-            self.input = self.input[1:]
+            self.input = self.input[len(self.title_match_char):]
         else:
             self.pageTitleOnly = False
 
         queryCheck = self.input
-        self.gui.after(150, lambda: self.search(queryCheck)) # ideal delay between keystrokes
+        self.gui.after(self.keystroke_delay, lambda: self.search(queryCheck)) # ideal delay between keystrokes
 
     def search(self, queryCheck):
         if self.input == "" or queryCheck != self.input: # meanwhile, we added another letter → cancel search
