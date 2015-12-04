@@ -79,15 +79,20 @@ class InstantsearchMainWindowExtension(WindowExtension):
         with open("/tmp/test.js","w") as f:
             #f.write(str(self.window.ui.notebook.index.list_pages(Path(':')))+"\n")
             for s in self.window.ui.notebook.index.list_pages(Path(':')):
-                self.cached_titles.append(s.basename)
-                for s2 in self.window.ui.notebook.get_pagelist(Path(s.basename)):
-                    self.cached_titles.append(s.basename+":"+s2.basename)
-                    for s3 in self.window.ui.notebook.get_pagelist(Path(s.basename+":"+s2.basename)):
-                        self.cached_titles.append(s.basename+":"+s2.basename+":"+s3.basename)
-                        for s4 in self.window.ui.notebook.get_pagelist(Path(s.basename+":"+s2.basename+":"+s3.basename)):
-                            self.cached_titles.append(s.basename+":"+s2.basename+":"+s3.basename+":"+s4.basename)
-                            for s5 in self.window.ui.notebook.get_pagelist(Path(s.basename+":"+s2.basename+":"+s3.basename+":"+s4.basename)):
-                                self.cached_titles.append(s.basename+":"+s2.basename+":"+s3.basename+":"+s4.basename+":"+s5.basename)
+                st = s.basename
+                self.cached_titles.append((st,st.lower()))
+                for s2 in self.window.ui.notebook.get_pagelist(Path(st)):
+                    st = s.basename+":"+s2.basename
+                    self.cached_titles.append((st,st.lower()))
+                    for s3 in self.window.ui.notebook.get_pagelist(Path(st)):
+                        st = s.basename+":"+s2.basename+":"+s3.basename
+                        self.cached_titles.append((st,st.lower()))
+                        for s4 in self.window.ui.notebook.get_pagelist(Path(st)):
+                            st = s.basename+":"+s2.basename+":"+s3.basename+":"+s4.basename
+                            self.cached_titles.append((st,st.lower()))
+                            for s5 in self.window.ui.notebook.get_pagelist(Path(st)):
+                                st = s.basename+":"+s2.basename+":"+s3.basename+":"+s4.basename+":"+s5.basename
+                                self.cached_titles.append((st,st.lower()))
             f.write(str(self.cached_titles))
 
             #        f.write(" -"+str(s2)+"\n")
@@ -175,13 +180,16 @@ class InstantsearchMainWindowExtension(WindowExtension):
         else:
             self.pageTitleOnly = False
 
+
+        # quick search in titles
         queryCheck = self.input
         self.menu = defaultdict(_MenuItem) #mozne prikazy uzivatele
         found = 0
-        for item in self.cached_titles: # quick search in titles
-            p = item.find(self.input) # if we search in titles, we want the title to start with the query
-            print("item: ",item, p)
-            if p == 0 or item[p-1] == ":": # 'te' matches 'test' or 'Journal:test'
+        input = self.input.lower()
+        for item,lowered in self.cached_titles:
+            p = lowered.find(input) # if we search in titles, we want the title to start with the query
+            print("item: ",lowered, p)
+            if p == 0 or lowered[p-1] == ":": # 'te' matches 'test' or 'Journal:test'
                 print("FOUND")
                 self.menu[item].score = 1
                 self.menu[item].isTitle = True
@@ -296,7 +304,9 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.labelVar.set(text)
                         
             #subprocess.Popen('zim Notes "'+page+'"', shell=True)
+        print("*** VYHODNOCENI ***")        
         page = self.caret['text']
+        print(page)
         self._open_page(Path(page))
             
             # krade focus po pet vterin, abych mezitim mel nahledy otevrenych oken zimu;
@@ -329,6 +339,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
     # open page and highlight matches
     def _open_page(self, page):
+        print(self.lastPage)
         if page and page.name and page.name != self.lastPage:
             self.lastPage = page.name
             print("page", page.name)
