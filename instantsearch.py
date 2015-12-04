@@ -41,7 +41,7 @@ When you hit Ctrl+E, small window opens, in where you can type.
 As you type third letter, every page that matches your search is listed.
 You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to cancel. Much quicker than current Zim search.
 
-(V0.2)
+(V0.3)
 '''),
         'author': "Edvard Rejthar"
         #'help': 'Plugins:Due date',
@@ -76,10 +76,31 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
     @action(_('_Instantsearch'), accelerator='<ctrl>e') # T: menu item
     def instantsearch(self):
-        
+
+        self.cached_titles = []
+        with open("/tmp/test.js","w") as f:
+            #f.write(str(self.window.ui.notebook.index.list_pages(Path(':')))+"\n")
+            for s in self.window.ui.notebook.index.list_pages(Path(':')):
+                #f.write(str(s)+"\n")
+                #f.write(str(s.basename)+"\n")
+                self.cached_titles.append(s.basename)
+                    #f.write(str(self.window.ui.notebook.get_pagelist(Path(s.basename))))
+                for s2 in self.window.ui.notebook.get_pagelist(Path(s.basename)):
+                    #f.write(str(s2)+"\n")
+                    #f.write(str(s2.basename)+"\n")
+                    self.cached_titles.append(s.basename+":"+s2.basename)
+                    for s3 in self.window.ui.notebook.get_pagelist(Path(s.basename+":"+s2.basename)):
+                    #f.write(str(s2)+"\n")
+                    #f.write(str(s2.basename)+"\n")
+                        self.cached_titles.append(s.basename+":"+s2.basename+":"+s3.basename)
+            f.write(str(self.cached_titles))
+
+            #        f.write(" -"+str(s2)+"\n")
+            #        for s3 in self.window.ui.notebook.get_pagelist(s2):
+            #            f.write(" -"+str(s2)+"\n")
         #print(str(self.window.ui.pageview))
         #print(str(self.window.ui.pageview.__dict__))    
-        #with open("/tmp/test.js","w") as f:
+        
             #f.write(str(x+w-200))
             #f.write(str(self.window.windowpos[0]))
             #f.write(str(self.window.windowpos[0] + self.window.windowsize[0] - 200))
@@ -105,9 +126,10 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.caret = {'pos':0, 'altPos':0, 'text':""}  # cursor position
         #self.matches = [] # XX lze sem dat recentne pouzite
         self.originalPage = self.window.ui.page.name # we return here after escape
+        self.selection = None
 
         self.gui = Tk()
-        Label(self.gui, text="Instantsearch (if 1st letter is !, search in page titles only):").pack()
+        Label(self.gui, text="Instantsearch").pack()
         self.gui.bind('<Up>', self.move)
         self.gui.bind('<Down>', self.move)
         self.gui.bind('<Enter>', self.move)
@@ -122,8 +144,9 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.entry.focus_set()
 
         # output text
-        self.labelText = StringVar()
-        self.label = Label(self.gui, textvariable=self.labelText, justify="left")
+        self.labelText = ""
+        self.labelVar = StringVar()
+        self.label = Label(self.gui, textvariable=self.labelVar, justify="left")
         self.label.pack()
 
         #gui geometry
@@ -146,7 +169,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
     def change(self, one, two, text):        
         self.input = self.inputText.get() #self.entry.get() + event.char
 
-        if len(self.input) < self.start_search_length or self.input == self.lastInput:
+        if self.input == self.lastInput:
             return
 
         self.lastInput = self.input
@@ -158,7 +181,21 @@ class InstantsearchMainWindowExtension(WindowExtension):
             self.pageTitleOnly = False
 
         queryCheck = self.input
-        self.gui.after(self.keystroke_delay, lambda: self.search(queryCheck)) # ideal delay between keystrokes
+        self.menu = defaultdict(_MenuItem) #mozne prikazy uzivatele
+        found = 0
+        for item in self.cached_titles: # quick search in titles
+            p = item.find(self.input) # if we search in titles, we want the title to start with the query
+            if p == 0 or item[p-1] == ":": # 'te' matches 'test' or 'Journal:test'
+                self.menu[item].score = 1
+                self.menu[item].isTitle = True
+                found += 1
+                if found >= 10: # vic nez 10 vysledku nechceme, snadno tam budeme mit vsechny
+                    break
+        self.displayMenu() # zobrazit aspon vysledky hledani v titlech
+
+        if len(self.input) >= self.start_search_length:
+            self.gui.after(self.keystroke_delay, lambda: self.search(queryCheck)) # ideal delay between keystrokes        
+        
 
     def search(self, queryCheck):
         if self.input == "" or queryCheck != self.input: # meanwhile, we added another letter → cancel search
@@ -166,16 +203,19 @@ class InstantsearchMainWindowExtension(WindowExtension):
             return
         else:
             print("RUN QUERY ", self.input, queryCheck)
-
-        self.menu = defaultdict(_MenuItem) #mozne prikazy uzivatele
+        
         self.caret['altPos'] = 0 #mozne umisteni karetu - na zacatek
         
         s = '"*' + self.input + '*"'
         print(s)
         self.query = Query(s)
         #self.scores = defaultdict(int)
-        
-        SearchSelection(self.window.ui.notebook).search(self.query, callback=self._search_callback)
+
+        if self.selection:
+            selection = self.selection # teoreticky by predani puvodni selection melo zrychlit vysledky (protoze pri pridani pismenka staci prohledat jen vysledky z minula, ne vsechny stranky). Ale nevim, jestli se to tak deje (protoze pri backspacu a jinem retezci by to melo vyhledat zase mnohem mene resultu, nez pri jinem retezci samostatne).
+        else:
+            selection = None
+        self.selection = SearchSelection(self.window.ui.notebook).search(self.query, selection = None, callback=self._search_callback)
         if len(self.menu) == 1:
             for page in self.menu:
                 self._open_page(Path(page))
@@ -233,7 +273,18 @@ class InstantsearchMainWindowExtension(WindowExtension):
         #print("caret:" + str(caret['pos']))
 
         text = ""
-        for i, item in enumerate(self.menu):
+        
+        
+
+        
+        newlist = sorted(self.menu, reverse = True, key=lambda item: (self.menu[item].isTitle, self.menu[item].score, item))
+        print(" ********** \n\n\n")
+        print("menu")
+        print(str(self.menu))
+        for item in newlist:
+            print(str(item) + " sc:" + str(self.menu[item].score) + " title:" + str(self.menu[item].isTitle))
+
+        for i, item in enumerate(newlist):#
             if i == self.caret['pos']: #karet je na pozici
                 self.caret['text'] = item
                 text += '*' + item + " ("+ str(self.menu[item].score) + ")\n"#vypsat moznost tucne
@@ -243,8 +294,8 @@ class InstantsearchMainWindowExtension(WindowExtension):
                 except:
                     text += "CHYBA\n"
                     text += item[0:-1] + "\n"
-
-        self.labelText.set(text)
+        
+        self.labelVar.set(text)
                         
             #subprocess.Popen('zim Notes "'+page+'"', shell=True)
         page = self.caret['text']
@@ -288,7 +339,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
             if self.query:# and self.query.simple_match:
                 string = self.input#self.query.simple_match
                 string = string.strip('*') # support partial matches
-                self.window.ui.mainwindow.pageview.show_find(string, highlight=True)
+                #self.window.ui.mainwindow.pageview.show_find(string, highlight=True)
 
 
 # menu = defaultdict(_Menu)
@@ -296,3 +347,4 @@ class _MenuItem(set):
     def __init__(self):
         self.path = None
         self.score = None
+        self.isTitle = False
