@@ -4,23 +4,21 @@
 # Search instantly as you Type. Edvard Rejthar
 # https://github.com/e3rd/zim-plugin-instantsearch
 #
-import ConfigParser
-from Tkinter import Entry, Label, StringVar, Tk
-import Tkinter
+#import Tkinter
+#from Tkinter import Entry
+#from Tkinter import Label
+#from Tkinter import StringVar
+#from Tkinter import Tk
+import gobject
 from collections import defaultdict
 import gtk
 import logging
-import re
-import select
-import subprocess
-import sys
-import termios
-import time
-import tty
 from zim.actions import action
+from zim.gui.widgets import BrowserTreeView
 from zim.gui.widgets import Dialog
-from zim.gui.widgets import MessageDialog
-from zim.gui.widgets import ui_environment
+from zim.gui.widgets import ErrorDialog
+from zim.gui.widgets import InputEntry
+from zim.gui.widgets import ScrolledWindow
 from zim.notebook import Path
 from zim.plugins import PluginClass
 from zim.plugins import WindowExtension
@@ -46,12 +44,12 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
     }
 
     plugin_preferences = (
-		# T: label for plugin preferences dialog
-                ('title_match_char', 'string', _('Match title with query starting with the char'), "!"),
-                ('start_search_length', 'int', _('Start the search when number of letters written'), 3),
-                ('keystroke_delay', 'int', _('Keystroke delay'), 150),
-		# T: plugin preference
-	)
+                          # T: label for plugin preferences dialog
+                          ('title_match_char', 'string', _('Match title with query starting with the char'), "!"),
+                          ('start_search_length', 'int', _('Start the search when number of letters written'), 3),
+                          ('keystroke_delay', 'int', _('Keystroke delay'), 150),
+                          # T: plugin preference
+                          )
 
 
 @extends('MainWindow')
@@ -76,44 +74,23 @@ class InstantsearchMainWindowExtension(WindowExtension):
     def instantsearch(self):
 
         self.cached_titles = []
-        with open("/tmp/test.js","w") as f:
+        #with open("/tmp/test.js","w") as f:
             #f.write(str(self.window.ui.notebook.index.list_pages(Path(':')))+"\n")
-            for s in self.window.ui.notebook.index.list_pages(Path(':')):
-                st = s.basename
-                self.cached_titles.append((st,st.lower()))
-                for s2 in self.window.ui.notebook.get_pagelist(Path(st)):
-                    st = s.basename+":"+s2.basename
-                    self.cached_titles.append((st,st.lower()))
-                    for s3 in self.window.ui.notebook.get_pagelist(Path(st)):
-                        st = s.basename+":"+s2.basename+":"+s3.basename
-                        self.cached_titles.append((st,st.lower()))
-                        for s4 in self.window.ui.notebook.get_pagelist(Path(st)):
-                            st = s.basename+":"+s2.basename+":"+s3.basename+":"+s4.basename
-                            self.cached_titles.append((st,st.lower()))
-                            for s5 in self.window.ui.notebook.get_pagelist(Path(st)):
-                                st = s.basename+":"+s2.basename+":"+s3.basename+":"+s4.basename+":"+s5.basename
-                                self.cached_titles.append((st,st.lower()))
-            f.write(str(self.cached_titles))
-
-            #        f.write(" -"+str(s2)+"\n")
-            #        for s3 in self.window.ui.notebook.get_pagelist(s2):
-            #            f.write(" -"+str(s2)+"\n")
-        #print(str(self.window.ui.pageview))
-        #print(str(self.window.ui.pageview.__dict__))    
-        
-            #f.write(str(x+w-200))
-            #f.write(str(self.window.windowpos[0]))
-            #f.write(str(self.window.windowpos[0] + self.window.windowsize[0] - 200))
-            #f.write("start")
-            #f.write(str(self.window.__dict__))
-            #f.write("\nsecond")
-            #f.write(str(self.window.ui.__dict__))
-            #f.write("\n\n\nthird")
-            #f.write(str(self.window.ui.page.name))            
-        #DAT GUI WIDTH a pozicovat doprava:
-            #self.window.windowpos': (0, 24),
-            #self.window.windowsize. (1920, 1056),
-            
+        for s in self.window.ui.notebook.index.list_pages(Path(':')):
+            st = s.basename
+            self.cached_titles.append((st, st.lower()))
+            for s2 in self.window.ui.notebook.get_pagelist(Path(st)):
+                st = s.basename + ":" + s2.basename
+                self.cached_titles.append((st, st.lower()))
+                for s3 in self.window.ui.notebook.get_pagelist(Path(st)):
+                    st = s.basename + ":" + s2.basename + ":" + s3.basename
+                    self.cached_titles.append((st, st.lower()))
+                    for s4 in self.window.ui.notebook.get_pagelist(Path(st)):
+                        st = s.basename + ":" + s2.basename + ":" + s3.basename + ":" + s4.basename
+                        self.cached_titles.append((st, st.lower()))
+                        for s5 in self.window.ui.notebook.get_pagelist(Path(st)):
+                            st = s.basename + ":" + s2.basename + ":" + s3.basename + ":" + s4.basename + ":" + s5.basename
+                            self.cached_titles.append((st, st.lower()))
 
         # preferences
         self.title_match_char = self.plugin.preferences['title_match_char']
@@ -127,12 +104,44 @@ class InstantsearchMainWindowExtension(WindowExtension):
         #self.matches = [] # XX lze sem dat recentne pouzite
         self.originalPage = self.window.ui.page.name # we return here after escape
         self.selection = None
+        self.scores = defaultdict(int)
 
+
+        # Gtk
+        self.gui = Dialog(self.window.ui, _('Search'), buttons = None, defaultwindowsize=(300, -1))
+        self.gui.resize(300,100) # reset size
+        #hbox = gtk.HBox(spacing=5)
+        #self.gui.vbox.pack_start(hbox, expand=True,fill=True,padding=0)
+        self.inputEntry = InputEntry()
+        self.inputEntry.connect('key_press_event', self.move)
+        self.inputEntry.connect('changed', self.change)        
+        self.gui.vbox.pack_start(self.inputEntry, False)
+        #hbox.add(self.inputEntry)
+        
+        self.labelObject = gtk.Label(_(''))
+        self.labelObject.set_usize(300,-1)
+        #hbox.pack_start(self.labelObject, False) # T: input label
+        self.gui.vbox.pack_start(self.labelObject, False)
+        #a.set_value("test")
+
+
+        #gui geometry
+        x, y = self.window.uistate.get("windowpos")
+        w, h = self.window.uistate.get("windowsize")
+        self.gui.move((w-300),0)
+
+        self.gui.show_all()
+        
+        self.labelVar = ""
+        self.timeout = ""
+
+        """
+        # Tkinter
         self.gui = Tk()
         Label(self.gui, text="Instantsearch").grid(row=1,column=1, sticky = Tkinter.W)
         self.gui.bind('<Up>', self.move)
         self.gui.bind('<Down>', self.move)
-        self.gui.bind('<Enter>', self.move)
+        self.gui.bind('<KP_Enter>', self.move)
         self.gui.bind('<Return>', self.move)
         self.gui.bind('<Escape>', self.move)
 
@@ -143,8 +152,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.entry.grid(row=2,column=1, sticky = Tkinter.W)
         self.entry.focus_set()
 
-        # output text
-        self.labelText = ""
+        # output text        
         self.labelVar = StringVar()
         self.label = Label(self.gui, textvariable=self.labelVar, justify="left")
         self.label.grid(row=3,column=1, sticky = Tkinter.W)
@@ -156,8 +164,10 @@ class InstantsearchMainWindowExtension(WindowExtension):
         #    f.write(str(x) + " " + str((x+w-200)))
         self.gui.geometry('+%d+0' % (x + w-300))
         #self.gui.wm_attributes("-topmost", 1)
-        self.scores = defaultdict(int)
         self.gui.mainloop()
+        """
+
+
 
     
     lastInput = ""
@@ -166,10 +176,14 @@ class InstantsearchMainWindowExtension(WindowExtension):
     menu = []
     #queryTime = 0    
 
-    def change(self, one, two, text):        
-        self.input = self.inputText.get() #self.entry.get() + event.char
+    def change(self, editable): #widget, event,text
 
-        if self.input == self.lastInput:
+        print("CHANGESTART",self.input)
+        if self.timeout:
+            gobject.source_remove(self.timeout)
+        self.input = self.inputEntry.get_text() #self.inputText.get() #self.entry.get() + event.char
+        
+        if self.input == self.lastInput:            
             return
 
         self.lastInput = self.input
@@ -182,33 +196,37 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
 
         # quick search in titles
-        queryCheck = self.input
+        #queryCheck = self.input
         self.menu = defaultdict(_MenuItem) #mozne prikazy uzivatele
         found = 0
         input = self.input.lower()
         for item,lowered in self.cached_titles:
             p = lowered.find(input) # if we search in titles, we want the title to start with the query
-            print("item: ",lowered, p)
+            #print("item: ",lowered, p)
             if p == 0 or lowered[p-1] == ":": # 'te' matches 'test' or 'Journal:test'
-                print("FOUND")
+                #print("FOUND")
                 self.menu[item].score = 1
                 self.menu[item].isTitle = True
                 found += 1
                 if found >= 10: # vic nez 10 vysledku nechceme, snadno tam budeme mit vsechny
                     break
-
+        #if found > 0:
         self.displayMenu() # zobrazit aspon vysledky hledani v titlech
 
         if len(self.input) >= self.start_search_length:
-            self.gui.after(self.keystroke_delay, lambda: self.search(queryCheck)) # ideal delay between keystrokes        
+            #self.gui.after(self.keystroke_delay, lambda: self.search(queryCheck)) # ideal delay between keystrokes
+            print("TIMEOUT START",self.timeout)
+            self.timeout = gobject.timeout_add(self.keystroke_delay, self.search)
         
 
-    def search(self, queryCheck):
-        if self.input == "" or queryCheck != self.input: # meanwhile, we added another letter → cancel search
-            print("CANCEL ",self.input)
-            return
-        else:
-            print("RUN QUERY ", self.input, queryCheck)
+    def search(self): #, queryCheck
+        self.timeout = ""
+        print("VYHODNOCUJU")
+        #if self.input == "" or queryCheck != self.input: # meanwhile, we added another letter → cancel search
+        #    print("CANCEL ",self.input)
+        #    return
+        #else:
+        #    print("RUN QUERY ", self.input, queryCheck)
         
         self.caret['altPos'] = 0 #mozne umisteni karetu - na zacatek
         
@@ -271,6 +289,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
 
     def displayMenu(self):
+        self.gui.resize(300,100) # reset size
         #osetrit vychyleni karetu
         if self.caret['pos'] < 0 or self.caret['pos'] > len(self.menu)-1: #umistit karet na zacatek ci konec seznamu
             self.caret['pos'] = self.caret['altPos']
@@ -284,11 +303,11 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
         
         newlist = sorted(self.menu, reverse = True, key=lambda item: (self.menu[item].isTitle, self.menu[item].score, -item.count(":"),item))
-        print(" ********** \n\n\n")
-        print("menu")
-        print(str(self.menu))
-        for item in newlist:
-            print(str(item) + " sc:" + str(self.menu[item].score) + " title:" + str(self.menu[item].isTitle))
+        #print(" ********** \n\n\n")
+        #print("menu")
+        #print(str(self.menu))
+        #for item in newlist:
+            #print(str(item) + " sc:" + str(self.menu[item].score) + " title:" + str(self.menu[item].isTitle))
 
         for i, item in enumerate(newlist):#
             if i == self.caret['pos']: #karet je na pozici
@@ -300,13 +319,15 @@ class InstantsearchMainWindowExtension(WindowExtension):
                 except:
                     text += "CHYBA\n"
                     text += item[0:-1] + "\n"
-        
-        self.labelVar.set(text)
+
+
+        self.labelObject.set_text(text)
+        #self.labelVar.set(text)
                         
             #subprocess.Popen('zim Notes "'+page+'"', shell=True)
-        print("*** VYHODNOCENI ***")        
+        #print("*** VYHODNOCENI ***")
         page = self.caret['text']
-        print(page)
+        #print(page)
         self._open_page(Path(page))
             
             # krade focus po pet vterin, abych mezitim mel nahledy otevrenych oken zimu;
@@ -315,27 +336,32 @@ class InstantsearchMainWindowExtension(WindowExtension):
             #    self.gui.after(i, lambda: self.entry.focus_force())
 
         
-    def move(self, event):
-        if event.keysym == "Up":
+    def move(self, widget, event):
+        keyname = gtk.gdk.keyval_name(event.keyval)
+        if keyname == "Up":
             self.caret['pos'] -= 1
+            self.displayMenu()
 
-        if event.keysym == "Down":
+        if keyname == "Down":
             self.caret['pos'] += 1
+            self.displayMenu()
+        
+        if keyname == "KP_Enter" or keyname == "Return":
+            #self.gui.destroy() # page has been opened when the menu item was accessed by the caret
+            self.gui.emit("close")
 
-        if event.keysym == "Enter" or event.keysym == "Return":
-            self.gui.destroy() # page has been opened when the menu item was accessed by the caret
-
-        if event.keysym == "Escape":
+        if keyname == "Escape":
             self._open_page(Path(self.originalPage))
-            self.close()
+            # GTK to resi sam    self.close()
 
-        self.displayMenu()
+        #self.displayMenu()
         return
 
     ## Safely closes
     # when closing directly, Python gave allocation error
     def close(self):
-        self.gui.after(200, lambda: self.gui.destroy())
+        #self.gui.after(200, lambda: self.gui.destroy())
+        self.timeout = gobject.timeout_add(self.keystroke_delay + 100, self.gui.emit,"close")
 
     # open page and highlight matches
     def _open_page(self, page):
