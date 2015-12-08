@@ -14,16 +14,17 @@ from collections import defaultdict
 import gtk
 import logging
 from zim.actions import action
-from zim.gui.widgets import BrowserTreeView
+#from zim.gui.widgets import BrowserTreeView
 from zim.gui.widgets import Dialog
-from zim.gui.widgets import ErrorDialog
+#from zim.gui.widgets import ErrorDialog
 from zim.gui.widgets import InputEntry
-from zim.gui.widgets import ScrolledWindow
+#from zim.gui.widgets import ScrolledWindow
 from zim.notebook import Path
 from zim.plugins import PluginClass
 from zim.plugins import WindowExtension
 from zim.plugins import extends
 from zim.search import *
+#from zim.parsing import Re
 
 logger = logging.getLogger('zim.plugins.instantsearch')
 
@@ -37,7 +38,7 @@ When you hit Ctrl+E, small window opens, in where you can type.
 As you type third letter, every page that matches your search is listed.
 You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to cancel. Much quicker than current Zim search.
 
-(V0.3)
+(V0.4)
 '''),
         'author': "Edvard Rejthar"
         #'help': 'Plugins:Due date',
@@ -46,8 +47,9 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
     plugin_preferences = (
                           # T: label for plugin preferences dialog
                           ('title_match_char', 'string', _('Match title with query starting with the char'), "!"),
-                          ('start_search_length', 'int', _('Start the search when number of letters written'), 3),
-                          ('keystroke_delay', 'int', _('Keystroke delay'), 150),
+                          ('start_search_length', 'int', _('Start the search when number of letters written'), 3,(0,10)),
+                          ('keystroke_delay', 'int', _('Keystroke delay'), 150,(0,5000)),
+                          ('highlight_search','bool', _('Highlight search'), True),
                           # T: plugin preference
                           )
 
@@ -176,9 +178,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
     menu = []
     #queryTime = 0    
 
-    def change(self, editable): #widget, event,text
-
-        print("CHANGESTART",self.input)
+    def change(self, editable): #widget, event,text        
         if self.timeout:
             gobject.source_remove(self.timeout)
         self.input = self.inputEntry.get_text() #self.inputText.get() #self.entry.get() + event.char
@@ -200,10 +200,12 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.menu = defaultdict(_MenuItem) #mozne prikazy uzivatele
         found = 0
         input = self.input.lower()
+        print("INPUT!!! ",input)
         for item,lowered in self.cached_titles:
             p = lowered.find(input) # if we search in titles, we want the title to start with the query
             #print("item: ",lowered, p)
-            if p == 0 or lowered[p-1] == ":": # 'te' matches 'test' or 'Journal:test'
+            if re.search(r"(^|:)"+input,lowered): # 'te' matches 'test' or 'Journal:test'
+            #if p == 0 or lowered[p-1] == ":": # 'te' matches 'test' or 'Journal:test'
                 #print("FOUND")
                 self.menu[item].score = 1
                 self.menu[item].isTitle = True
@@ -269,7 +271,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
     def _update_results(self, results):
         self.updateI += 1
-        #print("UPDATE", self.updateI)
+        print("UPDATE", results)
         #self.matches = str(process.communicate()[0]).split("\n")[:-1] #, "utf-8"        
         for option in results.scores:
             if self.pageTitleOnly and self.input not in option.name: # hledame jen v nazvu stranky
@@ -307,7 +309,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
         #print("menu")
         #print(str(self.menu))
         #for item in newlist:
-            #print(str(item) + " sc:" + str(self.menu[item].score) + " title:" + str(self.menu[item].isTitle))
+        #    print(str(item) + " sc:" + str(self.menu[item].score) + " title:" + str(self.menu[item].isTitle))
 
         for i, item in enumerate(newlist):#
             if i == self.caret['pos']: #karet je na pozici
@@ -374,7 +376,8 @@ class InstantsearchMainWindowExtension(WindowExtension):
             if self.query:# and self.query.simple_match:
                 string = self.input#self.query.simple_match
                 string = string.strip('*') # support partial matches
-                #self.window.ui.mainwindow.pageview.show_find(string, highlight=True)
+                if self.plugin.preferences['highlight_search']:
+                    self.window.ui.mainwindow.pageview.show_find(string, highlight=True)
 
 
 # menu = defaultdict(_Menu)
