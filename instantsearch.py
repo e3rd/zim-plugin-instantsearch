@@ -204,7 +204,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
         for item,lowered in self.cached_titles:
             p = lowered.find(input) # if we search in titles, we want the title to start with the query
             #print("item: ",lowered, p)
-            if re.search(r"(^|:)"+input,lowered): # 'te' matches 'test' or 'Journal:test'
+            if re.search(r"(^|:|\s)"+input,lowered): # 'te' matches 'test' or 'Journal:test'
             #if p == 0 or lowered[p-1] == ":": # 'te' matches 'test' or 'Journal:test'
                 #print("FOUND")
                 self.menu[item].score = 1
