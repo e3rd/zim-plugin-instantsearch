@@ -25,6 +25,9 @@ from zim.plugins import WindowExtension
 from zim.plugins import extends
 from zim.search import *
 #from zim.parsing import Re
+from pprint import pprint
+from zim.history import HistoryList, HistoryPath
+import copy
 
 logger = logging.getLogger('zim.plugins.instantsearch')
 
@@ -46,7 +49,7 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
 
     plugin_preferences = (
                           # T: label for plugin preferences dialog
-                          ('title_match_char', 'string', _('Match title with query starting with the char'), "!"),
+                          ('title_match_char', 'string', _('Match title only if query starting by this char'), "!"),
                           ('start_search_length', 'int', _('Start the search when number of letters written'), 3,(0,10)),
                           ('keystroke_delay', 'int', _('Keystroke delay'), 150,(0,5000)),
                           ('highlight_search','bool', _('Highlight search'), True),
@@ -76,8 +79,21 @@ class InstantsearchMainWindowExtension(WindowExtension):
     def instantsearch(self):
 
         self.cached_titles = []
-        #with open("/tmp/test.js","w") as f:
-            #f.write(str(self.window.ui.notebook.index.list_pages(Path(':')))+"\n")
+        
+        #with open("/tmp/test.txt","w") as f:
+        #    f.write(str(self.__dict__))
+        #print("****************************************")
+        #print(str(self.window.ui.notebook.__dict__))
+        
+        
+        #pprint(self.window.ui.history.uistate['list'])
+        #self.history = {}
+        #self.history["list"] = list(self.window.ui.history.uistate['list'])
+        #self.history["recent"] = list(self.window.ui.history.uistate['recent'])
+        #self.history["current"] = self.window.ui.history.uistate['current']
+        #pprint("ulozeno")
+        #pprint(self.history)
+
         for s in self.window.ui.notebook.index.list_pages(Path(':')):
             st = s.basename
             self.cached_titles.append((st, st.lower()))
@@ -137,40 +153,6 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.labelVar = ""
         self.timeout = ""
 
-        """
-        # Tkinter
-        self.gui = Tk()
-        Label(self.gui, text="Instantsearch").grid(row=1,column=1, sticky = Tkinter.W)
-        self.gui.bind('<Up>', self.move)
-        self.gui.bind('<Down>', self.move)
-        self.gui.bind('<KP_Enter>', self.move)
-        self.gui.bind('<Return>', self.move)
-        self.gui.bind('<Escape>', self.move)
-
-        # input text
-        self.inputText = StringVar()
-        self.inputText.trace("w", self.change)
-        self.entry = Entry(self.gui, width=60, textvariable=self.inputText)
-        self.entry.grid(row=2,column=1, sticky = Tkinter.W)
-        self.entry.focus_set()
-
-        # output text        
-        self.labelVar = StringVar()
-        self.label = Label(self.gui, textvariable=self.labelVar, justify="left")
-        self.label.grid(row=3,column=1, sticky = Tkinter.W)
-
-        #gui geometry
-        x, y = self.window.uistate.get("windowpos")
-        w, h = self.window.uistate.get("windowsize")
-        #with open("/tmp/test.js","w") as f:
-        #    f.write(str(x) + " " + str((x+w-200)))
-        self.gui.geometry('+%d+0' % (x + w-300))
-        #self.gui.wm_attributes("-topmost", 1)
-        self.gui.mainloop()
-        """
-
-
-
     
     lastInput = ""
     lastPage = ""
@@ -188,7 +170,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
         self.lastInput = self.input
 
-        if self.input[:len(self.title_match_char)] == self.title_match_char: #prvni znak vykricnik - hleda se nazev stranky
+        if self.input[:len(self.title_match_char)] == self.title_match_char: # first char is "!" -> searches in page name only
             self.pageTitleOnly = True
             self.input = self.input[len(self.title_match_char):]
         else:
@@ -233,15 +215,15 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.caret['altPos'] = 0 #mozne umisteni karetu - na zacatek
         
         s = '"*' + self.input + '*"'
-        print(s)
+        #print(s)
         self.query = Query(s)
         #self.scores = defaultdict(int)
 
-        if self.selection:
-            selection = self.selection # teoreticky by predani puvodni selection melo zrychlit vysledky (protoze pri pridani pismenka staci prohledat jen vysledky z minula, ne vsechny stranky). Ale nevim, jestli se to tak deje (protoze pri backspacu a jinem retezci by to melo vyhledat zase mnohem mene resultu, nez pri jinem retezci samostatne).
-        else:
-            selection = None
-        self.selection = SearchSelection(self.window.ui.notebook).search(self.query, selection = None, callback=self._search_callback)
+        #if self.selection:
+        #    selection = self.selection # teoreticky by predani puvodni selection melo zrychlit vysledky (protoze pri pridani pismenka staci prohledat jen vysledky z minula, ne vsechny stranky). Ale nevim, jestli se to tak deje (protoze pri backspacu a jinem retezci by to melo vyhledat zase mnohem mene resultu, nez pri jinem retezci samostatne).
+        #else:
+        #    selection = None
+        self.selection = SearchSelection(self.window.ui.notebook).search(self.query, selection = self.selection, callback=self._search_callback)
         if len(self.menu) == 1:
             for page in self.menu:
                 self._open_page(Path(page))
@@ -270,8 +252,11 @@ class InstantsearchMainWindowExtension(WindowExtension):
     updateI = 0
 
     def _update_results(self, results):
+        #if self.updateI == 0:
+        #    self.menu = defaultdict(_MenuItem) #mozne prikazy uzivatele
+        #    print("RESET now")
         self.updateI += 1
-        print("UPDATE", results)
+        #print("UPDATE", results)
         #self.matches = str(process.communicate()[0]).split("\n")[:-1] #, "utf-8"        
         for option in results.scores:
             if self.pageTitleOnly and self.input not in option.name: # hledame jen v nazvu stranky
@@ -291,6 +276,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
 
     def displayMenu(self):
+        print("Displaying menu")
         self.gui.resize(300,100) # reset size
         #osetrit vychyleni karetu
         if self.caret['pos'] < 0 or self.caret['pos'] > len(self.menu)-1: #umistit karet na zacatek ci konec seznamu
@@ -298,13 +284,11 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
         #vypsat self.menu
         #print("caret:" + str(caret['pos']))
+        text = ""                
 
-        text = ""
-        
-        
 
         
-        newlist = sorted(self.menu, reverse = True, key=lambda item: (self.menu[item].isTitle, self.menu[item].score, -item.count(":"),item))
+        newlist = sorted(self.menu, reverse = True, key=lambda item: (self.menu[item].isTitle, self.menu[item].score, -item.count(":"),item))        
         #print(" ********** \n\n\n")
         #print("menu")
         #print(str(self.menu))
@@ -314,7 +298,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
         for i, item in enumerate(newlist):#
             if i == self.caret['pos']: #karet je na pozici
                 self.caret['text'] = item
-                text += '*' + item + " ("+ str(self.menu[item].score) + ")\n"#vypsat moznost tucne
+                text += '→' + item + " ("+ str(self.menu[item].score) + ")\n"#vypsat moznost tucne
             else:
                 try:
                     text += item + " ("+ str(self.menu[item].score) + ")\n"
@@ -322,16 +306,14 @@ class InstantsearchMainWindowExtension(WindowExtension):
                     text += "CHYBA\n"
                     text += item[0:-1] + "\n"
 
-
         self.labelObject.set_text(text)
         #self.labelVar.set(text)
-                        
+        print("Displaying menu ended.")
             #subprocess.Popen('zim Notes "'+page+'"', shell=True)
         #print("*** VYHODNOCENI ***")
         page = self.caret['text']
         #print(page)
-        self._open_page(Path(page))
-            
+        self._open_page(Path(page))        
             # krade focus po pet vterin, abych mezitim mel nahledy otevrenych oken zimu;
             #  jestli z toho bude plugin, tak tahle kulisarna snad zmizi, protoze si bude se zimem povidat interne
             #for i in range(50,5000,50):
@@ -354,6 +336,12 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
         if keyname == "Escape":
             self._open_page(Path(self.originalPage))
+            #pprint("to bychom dali")
+            #self.window.ui.history.uistate['list'] = self.history["list"]
+            #self.window.ui.history.uistate['recent'] = self.history["recent"]
+            #self.window.ui.history.uistate['current'] = self.history["current"]
+            #self.window.ui.history.set_current(HistoryPath(self.originalPage))
+            #pprint(self.window.ui.history.uistate['list'])
             # GTK to resi sam    self.close()
 
         #self.displayMenu()
@@ -367,17 +355,19 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
     # open page and highlight matches
     def _open_page(self, page):
-        print(self.lastPage)
+        #print(self.lastPage)
         if page and page.name and page.name != self.lastPage:
             self.lastPage = page.name
-            print("page", page.name)
-            self.window.ui.open_page(page)
+            #print("page", page.name)
+            self.window.ui.open_page(page)            
             # Popup find dialog with same query
             if self.query:# and self.query.simple_match:
                 string = self.input#self.query.simple_match
-                string = string.strip('*') # support partial matches
-                if self.plugin.preferences['highlight_search']:
-                    self.window.ui.mainwindow.pageview.show_find(string, highlight=True)
+                string = string.strip('*') # support partial matches                
+                print(self.plugin.preferences['highlight_search'])
+                if self.plugin.preferences['highlight_search']:                    
+                    self.window.ui._mainwindow.pageview.show_find(string, highlight=True)
+                    
 
 
 # menu = defaultdict(_Menu)
