@@ -15,3 +15,7 @@ Same as for the other plugins.
   * something like %appdata%\Roaming\zim\data\zim\plugins in Win, or /~/.local/share/zim/plugins/ in Linux
 * You enable the plugin in Zim/Edit/Preferences/Plugins/ check mark Instant search.
 * Type Ctrl+E and see if it's working, or report it here
+
+### Demonstration on YouTube
+Wanna see how it looks in action? In this example, I just search for the string "linux f" twice.
+[![Demonstration](https://img.youtube.com/vi/nB2SfxDhEoM/0.jpg)](https://www.youtube.com/watch?v=nB2SfxDhEoM)
