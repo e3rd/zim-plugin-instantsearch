@@ -364,7 +364,7 @@ class State:
     @classmethod
     def reset(cls):
         """ Reset the cache. (That is normally held till the end of Zim.) """
-        cls._states = {}
+        State._states = {}
 
     @classmethod
     def setCurrent(cls,query):
