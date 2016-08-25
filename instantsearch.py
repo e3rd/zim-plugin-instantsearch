@@ -50,7 +50,8 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
                           ('keystroke_delay', 'int', _('Keystroke delay'), 150, (0, 5000)),
                           ('highlight_search', 'bool', _('Highlight search'), True),
                           ('ignore_subpages', 'bool', _("Ignore subpages (if ignored, search 'linux' would return page:linux but not page:linux:subpage (if in the subpage, there is no occurece of string 'linux')"), True),
-                          ('isWildcarded', 'bool', _("Append wildcards to the search string: *string*"), True)
+                          ('isWildcarded', 'bool', _("Append wildcards to the search string: *string*"), True),
+                          ('isCached', 'bool', _("Cache results of a search to be used in another search. (Till the end of zim process.)"), True)
                           # T: plugin preference
                           )
 
@@ -79,11 +80,15 @@ class InstantsearchMainWindowExtension(WindowExtension):
         #init
         self.cached_titles = []
         #self.menu = defaultdict(_MenuItem)
-        self.lastInput = "" # previous user input
+        self.lastQuery = "" # previous user input
         self.queryO = None
         self.caret = {'pos':0, 'altPos':0, 'text':""}  # cursor position
         self.originalPage = self.window.ui.page.name # we return here after escape
         self.selection = None
+        print("CAHCE")
+        if not self.plugin.preferences['isCached']:
+            print("RESET CACHE")
+            State.reset()
 
         # preferences
         self.title_match_char = self.plugin.preferences['title_match_char']
@@ -133,65 +138,73 @@ class InstantsearchMainWindowExtension(WindowExtension):
     menu = []
     #queryTime = 0    
 
-    def change(self, nil): #widget, event,text
+    def change(self, _): #widget, event,text
         if self.timeout:
             gobject.source_remove(self.timeout)        
-        input = self.inputEntry.get_text()
-        #print("Change. {} {}".format(input, self.lastInput))
-        if input == self.lastInput: return
-        if input[-1] == "∀": input = input[:-1]; import ipdb; ipdb.set_trace() # debug option for zim --standalone
-        self.state = State.setCurrent(input)
+        query = self.inputEntry.get_text()
+        #print("Change. {} {}".format(input, self.lastQuery))
+        if query == self.lastQuery: return
+        if query[-1] == "∀": # easter egg: debug option for zim --standalone
+            query = query[:-1]
+            import ipdb; ipdb.set_trace()
+        self.state = State.setCurrent(query)
 
         if not self.state.isFinished:
-            self.isSubset = True if self.lastInput and input.startswith(self.lastInput) else False
-            if input[:len(self.title_match_char)] == self.title_match_char: # first char is "!" -> searches in page name only
+            self.isSubset = True if self.lastQuery and query.startswith(self.lastQuery) else False
+            if query[:len(self.title_match_char)] == self.title_match_char: # first char is "!" -> searches in page name only
                 self.pageTitleOnly = True
-                self.state.query = input[len(self.title_match_char):].lower()
+                self.state.query = query[len(self.title_match_char):].lower()
             else:
                 self.pageTitleOnly = False
             self.startSearch()
         else: # search completed before
             #print("Search already cached.")
-            self.checkLast()
+            self.startSearch() # update the results in a page has been modified meanwhile (not if something got deleted in the notebook #16 )
+            self.checkLast()             
             self.soutMenu()
 
-        self.lastInput = input
+        self.lastQuery = query
 
     def startSearch(self):
         """ Search string has certainly changed. We search in indexed titles and/or we start zim search.
 
         Normally, zim gives 11 points bonus if the search-string appears in the titles.
-        If we are ignoring subpages, the search "foo" will match only page "journal:foo", but not "journal:foo:subpage" (and score of the parent page will get slightly higher by 1.) However, if there are occurences of the string in the fulltext of the subpage,
+        If we are ignoring subpages, the search "foo" will match only page "journal:foo",
+        but not "journal:foo:subpage" (and score of the parent page will get slightly higher by 1.)
+        However, if there are occurences of the string in the fulltext of the subpage,
         subpage remains in the result, but gets bonus only 2 points (not 11).
         
         """
         
-        input = self.state.query
-        if True: # quick titles NEJDRIV UDELAM, aby menu zbylo do priste, pak tohle
-            if self.isSubset and len(input) < self.start_search_length: # only letters added and full search not active yet
-                for path in _MenuItem.titles:
-                    if path in self.state.menu and not re.search(r"(^|:|\s)" + self.state.query, path.lower()):
-                        del self.state.menu[path]  # we pop out the result
-                    else:
-                        self.state.menu[path].sure = True
-            else: # perform new search
-                _MenuItem.titles = set()
-                found = 0
-                if self.state.firstSeen:
-                    for path, pathLow in self.cached_titles: # quick search in titles
-                        if re.search(r"(^|:|\s)" + input, pathLow): # 'te' matches 'test' or 'Journal:test
-                            if input in path.lower() and input not in path.lower().split(":")[-1]: # "raz" in "raz:dva", but not in "dva"
-                                self.state.menu[":".join(path.split(":")[:-1])].bonus += 1 # 1 point for subpage
-                                self.state.menu[path].bonus = -11
-                            self.state.menu[path].score += 10 # 10 points for title (zim default) (so that it gets displayed before search finishes)
-                            self.state.menu[path].path = path
-                            found += 1
-                            if found >= 10: # we dont want more than 10 results; we would easily match all of the pages
-                                break
+        query = self.state.query
+        menu = self.state.menu
+        isInQuery = re.compile(r"(^|:|\s|\()" + query).search  # 'te' matches this page titles: 'test' or 'Journal:test' or 'foo test' or 'foo (test)'
+        if self.isSubset and len(query) < self.start_search_length:
+            # letter(s) was/were added and full search has not yet been activated                        
+            for path in _MenuItem.titles:
+                if path in self.state.menu and not isInQuery(path.lower()):  # 'te' didnt match 'test' etc
+                    del menu[path]  # we pop out the result
+                else:
+                    menu[path].sure = True
+        else: # perform new search in cached_titles
+            _MenuItem.titles = set()
+            found = 0
+            if self.state.firstSeen:
+                for path, pathLow in self.cached_titles: # quick search in titles
+                    if isInQuery(pathLow): # 'te' matches 'test' or 'Journal:test' etc
+                        _MenuItem.titles.add(path)
+                        if query in path.lower() and query not in path.lower().split(":")[-1]: # "raz" in "raz:dva", but not in "dva"
+                            self.state.menu[":".join(path.split(":")[:-1])].bonus += 1 # 1 point for subpage
+                            menu[path].bonus = -11
+                        menu[path].score += 10 # 10 points for title (zim default) (so that it gets displayed before search finishes)
+                        menu[path].path = path
+                        found += 1
+                        if found >= 10: # we dont want more than 10 results; we would easily match all of the pages
+                            break
 
         self.processMenu() # show for now results of title search
 
-        if len(input) >= self.start_search_length:
+        if len(query) >= self.start_search_length:
             self.timeout = gobject.timeout_add(self.keystroke_delay, self.startZimSearch) # ideal delay between keystrokes
         
     def startZimSearch(self):
@@ -217,7 +230,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.processMenu(state = state)
 
     def checkLast(self):
-        """ opens the page if it's the only one """
+        """ opens the page if there is only one option in the menu """
         if len(self.state.menu) == 1:            
             self._open_page(Path(self.state.menu.keys()[0]))
             self.close()
@@ -237,7 +250,6 @@ class InstantsearchMainWindowExtension(WindowExtension):
         I may set that _update_results would run only once, but this is nice - the results are appearing one by one.
         """
         changed = False
-#        import ipdb;ipdb.set_trace()
 
         state.lastResults = results
         for option in results.scores:
@@ -288,9 +300,10 @@ class InstantsearchMainWindowExtension(WindowExtension):
             if score < 1:                
                 continue
             self.state.menu[item].lastOrder = i
-            if i == self.caret['pos']: #karet je na pozici
+            if i == self.caret['pos']:
+                # caret is at this position
                 self.caret['text'] = item
-                text += '→ {} ({}) {}\n'.format(item,score, "" if self.state.menu[item].sure else "?") #vypsat moznost tucne
+                text += '→ {} ({}) {}\n'.format(item,score, "" if self.state.menu[item].sure else "?")
             else:
                 try:
                     text += '{} ({}) {}\n'.format(item,score, "" if self.state.menu[item].sure else "?")
@@ -349,6 +362,11 @@ class State:
     _current = None
 
     @classmethod
+    def reset(cls):
+        """ Reset the cache. (That is normally held till the end of Zim.) """
+        cls._states = {}
+
+    @classmethod
     def setCurrent(cls,query):
         """ Returns other state. """
         query = query.lower()
@@ -374,7 +392,7 @@ class State:
             for item in self.menu.values():
                 item.sure = False
         else:
-            self.menu = defaultdict(_MenuItem)
+            self.menu = defaultdict(_MenuItem)        
 
 
 class _MenuItem():
