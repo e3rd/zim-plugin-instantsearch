@@ -12,7 +12,7 @@ I'd be glad to hear from you if it's working either here in the issues or in the
 ### Installation
 Same as for the other plugins.
 * Put the instantsearch.py into the plugins folder
-  * something like %appdata%\Roaming\zim\data\zim\plugins in Win, or /~/.local/share/zim/plugins/ in Linux
+  * something like %appdata%\zim\data\zim\plugins in Win, or /~/.local/share/zim/plugins/ in Linux
 * You enable the plugin in Zim/Edit/Preferences/Plugins/ check mark Instant search.
 * Type Ctrl+E and see if it's working, or report it here
 
