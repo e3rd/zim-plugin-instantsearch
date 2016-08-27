@@ -135,29 +135,26 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.timeoutOpenPage = None
 
         
-    lastPage = ""
-    pageTitleOnly = False
+    #lastPage = ""
+    #pageTitleOnly = False
     menu = []
     #queryTime = 0    
 
     def change(self, _): #widget, event,text
         if self.timeout:
             gobject.source_remove(self.timeout)        
-        query = self.inputEntry.get_text()
+        q = self.inputEntry.get_text()
         #print("Change. {} {}".format(input, self.lastQuery))
-        if query == self.lastQuery: return
-        if query and query[-1] == "∀": # easter egg: debug option for zim --standalone
-            query = query[:-1]
+        if q == self.lastQuery: return
+        if q == self.title_match_char: return
+        if q and q[-1] == "∀": # easter egg: debug option for zim --standalone
+            q = q[:-1]
             import ipdb; ipdb.set_trace()
-        self.state = State.setCurrent(query)
+        self.state = State.setCurrent(q)
 
         if not self.state.isFinished:
-            self.isSubset = True if self.lastQuery and query.startswith(self.lastQuery) else False
-            if query[:len(self.title_match_char)] == self.title_match_char: # first char is "!" -> searches in page name only
-                self.pageTitleOnly = True
-                self.state.query = query[len(self.title_match_char):].lower()
-            else:
-                self.pageTitleOnly = False
+            self.isSubset = True if self.lastQuery and q.startswith(self.lastQuery) else False
+            self.state.checkTitleSearch(self.title_match_char)
             self.startSearch()
         else: # search completed before
             #print("Search already cached.")
@@ -165,7 +162,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
             self.checkLast()             
             self.soutMenu()
 
-        self.lastQuery = query
+        self.lastQuery = q
 
     def startSearch(self):
         """ Search string has certainly changed. We search in indexed titles and/or we start zim search.
@@ -219,7 +216,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
         lastSel = self.selection if self.isSubset and self.state.previous.isFinished else None # it should be quicker to find the string, if we provide this subset from last time (in the case we just added a letter, so that the subset gets smaller)
         self.selection = SearchSelection(self.window.ui.notebook)
         state = self.state # this is thread, so that self.state would can before search finishes
-        self.selection.search(self.queryO, selection=lastSel, callback=self._search_callback(self.state.query))
+        self.selection.search(self.queryO, selection=lastSel, callback=self._search_callback(self.state.rawQuery))
         state.isFinished = True
 
         for item in list(state.menu): # remove all the items that we didnt encounter during the search
@@ -237,10 +234,10 @@ class InstantsearchMainWindowExtension(WindowExtension):
             self._open_page(Path(self.state.menu.keys()[0]))
             self.close()
 
-    def _search_callback(self,input):
+    def _search_callback(self,query):
         def _search_callback(results, path):
             if results is not None:                
-                self._update_results(results, State.get(input)) # we finish the search even if another search is running. If we returned False, the search would be cancelled-
+                self._update_results(results, State.get(query)) # we finish the search even if another search is running. If we returned False, the search would be cancelled-
             while gtk.events_pending():
                 gtk.main_iteration(block=False)
             return True
@@ -255,7 +252,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
         state.lastResults = results
         for option in results.scores:
-            if self.pageTitleOnly and state.query not in option.name: # hledame jen v nazvu stranky
+            if state.pageTitleOnly and state.query not in option.name: # hledame jen v nazvu stranky
                 continue            
             
             if option.name not in state.menu: # new item found                
@@ -374,7 +371,9 @@ class State:
 
     @classmethod
     def setCurrent(cls,query):
-        """ Returns other state. """
+        """ Returns other state.
+            query = rawQuery (including '!' sign for title only search)
+        """        
         query = query.lower()
         if query not in State._states:
             State._states[query] = State(query = query, previous = State._current)
@@ -385,20 +384,30 @@ class State:
         return State._current
 
     @classmethod
-    def get(cls, input):
-        return State._states[input.lower()]
+    def get(cls, query):        
+        return State._states[query.lower()]
 
     def __init__(self, query = "", previous = None):
         self.items = ""
         self.isFinished = False
         self.query = query
+        self.rawQuery = query # including '!' sign for title only search
         self.previous = previous
+        self.pageTitleOnly = False
         if previous:
             self.menu = deepcopy(previous.menu) 
             for item in self.menu.values():
                 item.sure = False
         else:
-            self.menu = defaultdict(_MenuItem)        
+            self.menu = defaultdict(_MenuItem)
+
+    def checkTitleSearch(self, title_match_char):
+        """ Check if we query page titles only, based on the special '!' sign in the query text. """
+        if self.query.startswith(title_match_char): # first char is "!" -> searches in page name only
+            self.pageTitleOnly = True
+            self.query = self.query[len(title_match_char):].lower()
+        else:
+            self.pageTitleOnly = False
 
 
 class _MenuItem():
