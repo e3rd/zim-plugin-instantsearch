@@ -84,11 +84,13 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.queryO = None
         self.caret = {'pos':0, 'altPos':0, 'text':""}  # cursor position
         self.originalPage = self.window.ui.page.name # we return here after escape
-        self.selection = None
-        print("CAHCE")
+        self.selection = None        
         if not self.plugin.preferences['isCached']:
-            print("RESET CACHE")
+            # reset last search results
             State.reset()
+        self.menuPage = None
+        self.isClosed = False
+        self.lastPage = None
 
         # preferences
         self.title_match_char = self.plugin.preferences['title_match_char']
@@ -130,7 +132,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.gui.show_all()
         self.labelVar = ""
         self.timeout = ""
-        self.timeoutOpenPage = ""
+        self.timeoutOpenPage = None
 
         
     lastPage = ""
@@ -144,7 +146,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
         query = self.inputEntry.get_text()
         #print("Change. {} {}".format(input, self.lastQuery))
         if query == self.lastQuery: return
-        if query[-1] == "∀": # easter egg: debug option for zim --standalone
+        if query and query[-1] == "∀": # easter egg: debug option for zim --standalone
             query = query[:-1]
             import ipdb; ipdb.set_trace()
         self.state = State.setCurrent(query)
@@ -286,10 +288,10 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
     def soutMenu(self):
         """ Displays menu and handles caret position. """
-        if self.timeoutOpenPage:
+        if self.timeoutOpenPage:            
             gobject.source_remove(self.timeoutOpenPage)
         self.gui.resize(300, 100) # reset size
-        #osetrit vychyleni karetu
+        # treat possible caret deflection
         if self.caret['pos'] < 0 or self.caret['pos'] > len(self.state.items)-1: #umistit karet na zacatek ci konec seznamu
             self.caret['pos'] = self.caret['altPos']
 
@@ -313,11 +315,11 @@ class InstantsearchMainWindowExtension(WindowExtension):
             i += 1
 
         self.labelObject.set_text(text)        
-        page = self.caret['text']
+        self.menuPage = Path(self.caret['text'])
 
-        self.timeoutOpenPage = gobject.timeout_add(self.keystroke_delay, self._open_page, Path(page)) # ideal delay between keystrokes
+        self.timeoutOpenPage = gobject.timeout_add(self.keystroke_delay, self._open_page, self.menuPage) # ideal delay between keystrokes
         #self._open_page(Path(page))
-        
+    
     def move(self, widget, event):
         """ Move caret up and down. Enter to confirm, Esc closes search."""
         keyname = gtk.gdk.keyval_name(event.keyval)
@@ -329,24 +331,28 @@ class InstantsearchMainWindowExtension(WindowExtension):
             self.caret['pos'] += 1
             self.soutMenu()
         
-        if keyname == "KP_Enter" or keyname == "Return":
-            #self.gui.destroy() # page has been opened when the menu item was accessed by the caret
-            self.gui.emit("close")
+        if keyname == "KP_Enter" or keyname == "Return":                        
+            self._open_page(self.menuPage)
+            self.close()
 
         if keyname == "Escape":
-            self._open_page(Path(self.originalPage))            
-            # GTK closes the windows itself, no self.close() needed
+            self._open_page(Path(self.originalPage))
+            # GTK closes the windows itself on Escape, no self.close() needed
 
         return
 
     ## Safely closes
-    # when closing directly, Python gave allocation error
+    # Xwhen closing directly, Python gave allocation error
     def close(self):
-        #self.gui.after(200, lambda: self.gui.destroy())
-        self.timeout = gobject.timeout_add(self.keystroke_delay + 100, self.gui.emit, "close")
+        if not self.isClosed:
+            self.isClosed = True
+            self.gui.emit("close")        
 
     def _open_page(self, page):
         """ Open page and highlight matches """
+        self.timeoutOpenPage = None # no delayed page will be open
+        if self.isClosed == True:            
+            return        
         if page and page.name and page.name != self.lastPage:
             self.lastPage = page.name
             self.window.ui.open_page(page)            
