@@ -231,7 +231,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
     def checkLast(self):
         """ opens the page if there is only one option in the menu """
         if len(self.state.menu) == 1:            
-            self._open_page(Path(self.state.menu.keys()[0]))
+            self._open_page(Path(self.state.menu.keys()[0]), excludeFromHistory = False)
             self.close()
 
     def _search_callback(self,query):
@@ -283,7 +283,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
         if state == self.state:
             self.soutMenu()        
 
-    def soutMenu(self):
+    def soutMenu(self, displayImmediately = False):
         """ Displays menu and handles caret position. """
         if self.timeoutOpenPage:            
             gobject.source_remove(self.timeoutOpenPage)
@@ -314,26 +314,28 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.labelObject.set_text(text)        
         self.menuPage = Path(self.caret['text'])
 
-        self.timeoutOpenPage = gobject.timeout_add(self.keystroke_delay, self._open_page, self.menuPage) # ideal delay between keystrokes
-        #self._open_page(Path(page))
+        if not displayImmediately:
+            self.timeoutOpenPage = gobject.timeout_add(self.keystroke_delay, self._open_page, self.menuPage) # ideal delay between keystrokes
+        else:
+            self._open_page(self.menuPage)
     
     def move(self, widget, event):
         """ Move caret up and down. Enter to confirm, Esc closes search."""
         keyname = gtk.gdk.keyval_name(event.keyval)
         if keyname == "Up":
             self.caret['pos'] -= 1
-            self.soutMenu()
+            self.soutMenu(displayImmediately = True)
 
         if keyname == "Down":
             self.caret['pos'] += 1
-            self.soutMenu()
+            self.soutMenu(displayImmediately = True)
         
         if keyname == "KP_Enter" or keyname == "Return":                        
-            self._open_page(self.menuPage)
+            self._open_page(self.menuPage, excludeFromHistory = False)
             self.close()
 
         if keyname == "Escape":
-            self._open_page(Path(self.originalPage))
+            self._open_page(Path(self.originalPage), excludeFromHistory = False)
             # GTK closes the windows itself on Escape, no self.close() needed
 
         return
@@ -345,14 +347,19 @@ class InstantsearchMainWindowExtension(WindowExtension):
             self.isClosed = True
             self.gui.emit("close")        
 
-    def _open_page(self, page):
+    def _open_page(self, page, excludeFromHistory = True):
         """ Open page and highlight matches """
         self.timeoutOpenPage = None # no delayed page will be open
         if self.isClosed == True:            
             return        
         if page and page.name and page.name != self.lastPage:
             self.lastPage = page.name
-            self.window.ui.open_page(page)            
+            #print("*** HISTORY BEF", self.window.ui.history._history[-3:])
+            self.window.ui.open_page(page)
+            if excludeFromHistory:
+                # there is no public API, so lest use protected _history instead
+                self.window.ui.history._history.pop()
+                self.window.ui.history._current = len(self.window.ui.history._history) - 1            
         # Popup find dialog with same query
         if self.queryO:# and self.queryO.simple_match:
             string = self.state.query
