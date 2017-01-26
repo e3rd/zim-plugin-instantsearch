@@ -121,7 +121,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.inputEntry.connect('key_press_event', self.move)
         self.inputEntry.connect('changed', self.change) # self.change is needed by GObject or something
         self.gui.vbox.pack_start(self.inputEntry, False)        
-        self.labelObject = gtk.Label(_(''))
+        self.labelObject = gtk.Label((''))
         self.labelObject.set_usize(300, -1)        
         self.gui.vbox.pack_start(self.labelObject, False)
 
