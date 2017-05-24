@@ -18,7 +18,6 @@ from zim.gui.widgets import Dialog
 from zim.gui.widgets import InputEntry
 from zim.history import HistoryList
 from zim.history import HistoryPath
-from zim.index import IndexPath
 from zim.notebook import Path
 from zim.plugins import PluginClass
 from zim.plugins import WindowExtension
