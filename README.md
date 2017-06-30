@@ -6,7 +6,8 @@ Much quicker than current Zim search.
 
 
 ### Working with & Feedback
-Known to work on Ubuntu 15.10, Zim 0.65+, Win 7, Zim 0.63+.
+Known to work on Ubuntu 17.04 Zim 0.67+, Ubuntu 15.10 Zim 0.65+, Win 7 Zim 0.63+.  
+(For **earlier version than Zim 0.66-** use an old commit from Mar 17, not the current version.)  
 I'd be glad to hear from you if it's working either here in the issues or in the original bug https://bugs.launchpad.net/zim/+bug/1409626 .
 
 ### Installation
