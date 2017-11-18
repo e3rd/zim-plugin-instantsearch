@@ -56,6 +56,7 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
                           ('ignore_subpages', 'bool', _("Ignore subpages (if ignored, search 'linux' would return page:linux but not page:linux:subpage (if in the subpage, there is no occurece of string 'linux')"), True),
                           ('isWildcarded', 'bool', _("Append wildcards to the search string: *string*"), True),
                           ('isCached', 'bool', _("Cache results of a search to be used in another search. (Till the end of zim process.)"), True),
+                          ('open_when_unique', 'bool', _('When only one page is found, open it automatically.'), True),
                           ('position', 'choice', _('Popup position'), POSITION_RIGHT, (POSITION_RIGHT, POSITION_CENTER))
                           # T: plugin preference
                           )
@@ -102,6 +103,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.title_match_char = self.plugin.preferences['title_match_char']
         self.start_search_length = self.plugin.preferences['start_search_length']
         self.keystroke_delay = self.plugin.preferences['keystroke_delay']
+        self.open_when_unique = self.plugin.preferences['open_when_unique']
 
         # building quick title cache
         def build(start = ""):
@@ -240,9 +242,10 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
     def checkLast(self):
         """ opens the page if there is only one option in the menu """
-        if len(self.state.menu) == 1:
-            self._open_page(Path(self.state.menu.keys()[0]), excludeFromHistory=False)
-            self.close()
+        if self.open_when_unique is True:
+            if len(self.state.menu) == 1:
+                self._open_page(Path(self.state.menu.keys()[0]), excludeFromHistory=False)
+                self.close()
 
     def _search_callback(self, query):
         def _search_callback(results, path):
