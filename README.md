@@ -7,7 +7,7 @@ Much quicker than current Zim search.
 
 ### Working with & Feedback
 Known to work on Ubuntu 17.04 Zim 0.67+, Ubuntu 15.10 Zim 0.65+, Win 7 Zim 0.63+.  
-(For **earlier version than Zim 0.66-** use an old commit from Mar 17, not the current version.)  
+(For **earlier version than Zim 0.66-**, open the plugin configuration window for Instant Search and enable the option for using Zim version earlier than 0.66-, or use an old Instant Search commit from Mar 17 instead of the current version.)
 I'd be glad to hear from you if it's working either here in the issues or in the original bug https://bugs.launchpad.net/zim/+bug/1409626 .
 
 ### Installation
