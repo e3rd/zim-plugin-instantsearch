@@ -353,11 +353,11 @@ class InstantsearchMainWindowExtension(WindowExtension):
     def move(self, widget, event):
         """ Move caret up and down. Enter to confirm, Esc closes search."""
         keyname = gtk.gdk.keyval_name(event.keyval)
-        if keyname == "Up":
+        if keyname == "Up" or keyname == "ISO_Left_Tab":
             self.caret['pos'] -= 1
             self.soutMenu(displayImmediately=False)
 
-        if keyname == "Down":
+        if keyname == "Down" or keyname == "Tab":
             self.caret['pos'] += 1
             self.soutMenu(displayImmediately=False)
 
