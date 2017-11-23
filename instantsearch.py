@@ -56,6 +56,7 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
                           ('ignore_subpages', 'bool', _("Ignore subpages (if ignored, search 'linux' would return page:linux but not page:linux:subpage (if in the subpage, there is no occurece of string 'linux')"), True),
                           ('isWildcarded', 'bool', _("Append wildcards to the search string: *string*"), True),
                           ('isCached', 'bool', _("Cache results of a search to be used in another search. (Till the end of zim process.)"), True),
+                          ('open_when_unique', 'bool', _('When only one page is found, open it automatically.'), True),
                           ('position', 'choice', _('Popup position'), POSITION_RIGHT, (POSITION_RIGHT, POSITION_CENTER))
                           # T: plugin preference
                           )
@@ -102,10 +103,15 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.title_match_char = self.plugin.preferences['title_match_char']
         self.start_search_length = self.plugin.preferences['start_search_length']
         self.keystroke_delay = self.plugin.preferences['keystroke_delay']
+        self.open_when_unique = self.plugin.preferences['open_when_unique']
 
         # building quick title cache
         def build(start = ""):
-            for s in self.window.ui.notebook.pages.list_pages(Path(start or ":")):
+            if hasattr(self.window.ui.notebook, 'pages'):
+                o = self.window.ui.notebook.pages
+            else: # for Zim 0.66-
+                o = self.window.ui.notebook.index
+            for s in o.list_pages(Path(start or ":")):
                 start2 = (start + ":" if start else "") + s.basename
                 self.cached_titles.append((start2, start2.lower()))
                 build(start2)
@@ -240,7 +246,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
     def checkLast(self):
         """ opens the page if there is only one option in the menu """
-        if len(self.state.menu) == 1:
+        if self.open_when_unique and len(self.state.menu) == 1:
             self._open_page(Path(self.state.menu.keys()[0]), excludeFromHistory=False)
             self.close()
 
@@ -331,11 +337,11 @@ class InstantsearchMainWindowExtension(WindowExtension):
     def move(self, widget, event):
         """ Move caret up and down. Enter to confirm, Esc closes search."""
         keyname = gtk.gdk.keyval_name(event.keyval)
-        if keyname == "Up":
+        if keyname == "Up" or keyname == "ISO_Left_Tab":
             self.caret['pos'] -= 1
             self.soutMenu(displayImmediately=False)
 
-        if keyname == "Down":
+        if keyname == "Down" or keyname == "Tab":
             self.caret['pos'] += 1
             self.soutMenu(displayImmediately=False)
 
