@@ -57,7 +57,6 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
                           ('isWildcarded', 'bool', _("Append wildcards to the search string: *string*"), True),
                           ('isCached', 'bool', _("Cache results of a search to be used in another search. (Till the end of zim process.)"), True),
                           ('open_when_unique', 'bool', _('When only one page is found, open it automatically.'), True),
-                          ('old_zim', 'bool', _('Check this option if using Zim version earlier than 0.66-.'), False),
                           ('position', 'choice', _('Popup position'), POSITION_RIGHT, (POSITION_RIGHT, POSITION_CENTER))
                           # T: plugin preference
                           )
@@ -105,31 +104,17 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.start_search_length = self.plugin.preferences['start_search_length']
         self.keystroke_delay = self.plugin.preferences['keystroke_delay']
         self.open_when_unique = self.plugin.preferences['open_when_unique']
-        self.old_zim = self.plugin.preferences['old_zim']
 
         # building quick title cache
         def build(start = ""):
-            if self.old_zim is False:
-                for s in self.window.ui.notebook.pages.list_pages(Path(start or ":")):
-                    start2 = (start + ":" if start else "") + s.basename
-                    self.cached_titles.append((start2, start2.lower()))
-                    build(start2)
-            else:
-                for s in self.window.ui.notebook.index.list_pages(Path(':')):
-                    st = s.basename
-                    self.cached_titles.append((st, st.lower()))
-                    for s2 in self.window.ui.notebook.get_pagelist(Path(st)):
-                        st = s.basename + ":" + s2.basename
-                        self.cached_titles.append((st, st.lower()))
-                        for s3 in self.window.ui.notebook.get_pagelist(Path(st)):
-                            st = s.basename + ":" + s2.basename + ":" + s3.basename
-                            self.cached_titles.append((st, st.lower()))
-                            for s4 in self.window.ui.notebook.get_pagelist(Path(st)):
-                                st = s.basename + ":" + s2.basename + ":" + s3.basename + ":" + s4.basename
-                                self.cached_titles.append((st, st.lower()))
-                                for s5 in self.window.ui.notebook.get_pagelist(Path(st)):
-                                    st = s.basename + ":" + s2.basename + ":" + s3.basename + ":" + s4.basename + ":" + s5.basename
-                                    self.cached_titles.append((st, st.lower()))
+            if hasattr(self.window.ui.notebook, 'pages'):
+                o = self.window.ui.notebook.pages
+            else: # for Zim 0.66-
+                o = self.window.ui.notebook.index
+            for s in o.list_pages(Path(start or ":")):
+                start2 = (start + ":" if start else "") + s.basename
+                self.cached_titles.append((start2, start2.lower()))
+                build(start2)
         build()
 
         # Gtk
@@ -261,10 +246,9 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
     def checkLast(self):
         """ opens the page if there is only one option in the menu """
-        if self.open_when_unique is True:
-            if len(self.state.menu) == 1:
-                self._open_page(Path(self.state.menu.keys()[0]), excludeFromHistory=False)
-                self.close()
+        if self.open_when_unique and len(self.state.menu) == 1:
+            self._open_page(Path(self.state.menu.keys()[0]), excludeFromHistory=False)
+            self.close()
 
     def _search_callback(self, query):
         def _search_callback(results, path):
