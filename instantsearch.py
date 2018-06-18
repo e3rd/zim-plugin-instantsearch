@@ -4,21 +4,16 @@
 # Search instantly as you type. Edvard Rejthar
 # https://github.com/e3rd/zim-plugin-instantsearch
 #
+import logging
 from collections import defaultdict
-import copy
 from copy import deepcopy
+
 import gobject
 import gtk
-import inspect
-import logging
-from pprint import pprint
-import sys
 from zim.actions import action
 from zim.gui.widgets import Dialog
 from zim.gui.widgets import InputEntry
-from zim.history import HistoryList
-from zim.history import HistoryPath
-#from zim.index import IndexPath
+# from zim.index import IndexPath
 from zim.notebook import Path
 from zim.plugins import PluginClass
 from zim.plugins import WindowExtension
@@ -27,10 +22,10 @@ from zim.search import *
 
 logger = logging.getLogger('zim.plugins.instantsearch')
 
-class InstantsearchPlugin(PluginClass):
 
+class InstantsearchPlugin(PluginClass):
     plugin_info = {
-        'name': _('Instant Search'), # T: plugin name
+        'name': _('Instant Search'),  # T: plugin name
         'description': _('''\
 Instant search allows you to filter as you type feature known from I.E. OneNote.
 When you hit Ctrl+E, small window opens, in where you can type.
@@ -40,31 +35,32 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
 (V1.4)
 '''),
         'author': "Edvard Rejthar"
-        #'help': 'Plugins:Instant search',
+        # 'help': 'Plugins:Instant search',
     }
 
-    global LINES_NONE, LINES_HORIZONTAL, LINES_VERTICAL, LINES_BOTH # Hack - to make sure translation is loaded
-    POSITION_CENTER = _('center') # T: option value
-    POSITION_RIGHT = _('right') # T: option value
+    global LINES_NONE, LINES_HORIZONTAL, LINES_VERTICAL, LINES_BOTH  # Hack - to make sure translation is loaded
+    POSITION_CENTER = _('center')  # T: option value
+    POSITION_RIGHT = _('right')  # T: option value
 
     plugin_preferences = (
-                          # T: label for plugin preferences dialog
-                          ('title_match_char', 'string', _('Match title only if query starting by this char'), "!"),
-                          ('start_search_length', 'int', _('Start the search when number of letters written'), 3, (0, 10)),
-                          ('keystroke_delay', 'int', _('Keystroke delay'), 150, (0, 5000)),
-                          ('highlight_search', 'bool', _('Highlight search'), True),
-                          ('ignore_subpages', 'bool', _("Ignore subpages (if ignored, search 'linux' would return page:linux but not page:linux:subpage (if in the subpage, there is no occurece of string 'linux')"), True),
-                          ('isWildcarded', 'bool', _("Append wildcards to the search string: *string*"), True),
-                          ('isCached', 'bool', _("Cache results of a search to be used in another search. (Till the end of zim process.)"), True),
-                          ('open_when_unique', 'bool', _('When only one page is found, open it automatically.'), True),
-                          ('position', 'choice', _('Popup position'), POSITION_RIGHT, (POSITION_RIGHT, POSITION_CENTER))
-                          # T: plugin preference
-                          )
+        # T: label for plugin preferences dialog
+        ('title_match_char', 'string', _('Match title only if query starting by this char'), "!"),
+        ('start_search_length', 'int', _('Start the search when number of letters written'), 3, (0, 10)),
+        ('keystroke_delay', 'int', _('Keystroke delay'), 150, (0, 5000)),
+        ('highlight_search', 'bool', _('Highlight search'), True),
+        ('ignore_subpages', 'bool', _(
+            "Ignore subpages (if ignored, search 'linux' would return page:linux but not page:linux:subpage (if in the subpage, there is no occurece of string 'linux')"),
+         True),
+        ('isWildcarded', 'bool', _("Append wildcards to the search string: *string*"), True),
+        ('isCached', 'bool', _("Cache results of a search to be used in another search. (Till the end of zim process.)"), True),
+        ('open_when_unique', 'bool', _('When only one page is found, open it automatically.'), True),
+        ('position', 'choice', _('Popup position'), POSITION_RIGHT, (POSITION_RIGHT, POSITION_CENTER))
+        # T: plugin preference
+    )
 
 
 @extends('MainWindow')
 class InstantsearchMainWindowExtension(WindowExtension):
-
     uimanager_xml = '''
     <ui>
     <menubar name='menubar'>
@@ -77,20 +73,18 @@ class InstantsearchMainWindowExtension(WindowExtension):
     </ui>
     '''
 
-
     gui = "";
 
-    @action(_('_Instantsearch'), accelerator='<ctrl>e') # T: menu item
+    @action(_('_Instantsearch'), accelerator='<ctrl>e')  # T: menu item
     def instantsearch(self):
 
-
-        #init
+        # init
         self.cached_titles = []
-        #self.menu = defaultdict(_MenuItem)
-        self.lastQuery = "" # previous user input
+        # self.menu = defaultdict(_MenuItem)
+        self.lastQuery = ""  # previous user input
         self.queryO = None
-        self.caret = {'pos':0, 'altPos':0, 'text':""}  # cursor position
-        self.originalPage = self.window.ui.page.name # we return here after escape
+        self.caret = {'pos': 0, 'altPos': 0, 'text': ""}  # cursor position
+        self.originalPage = self.window.ui.page.name  # we return here after escape
         self.selection = None
         if not self.plugin.preferences['isCached']:
             # reset last search results
@@ -106,35 +100,36 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.open_when_unique = self.plugin.preferences['open_when_unique']
 
         # building quick title cache
-        def build(start = ""):
+        def build(start=""):
             if hasattr(self.window.ui.notebook, 'pages'):
                 o = self.window.ui.notebook.pages
-            else: # for Zim 0.66-
+            else:  # for Zim 0.66-
                 o = self.window.ui.notebook.index
             for s in o.list_pages(Path(start or ":")):
                 start2 = (start + ":" if start else "") + s.basename
                 self.cached_titles.append((start2, start2.lower()))
                 build(start2)
+
         build()
 
         # Gtk
         self.gui = Dialog(self.window.ui, _('Search'), buttons=None, defaultwindowsize=(300, -1))
-        self.gui.resize(300, 100) # reset size
+        self.gui.resize(300, 100)  # reset size
         self.inputEntry = InputEntry()
         self.inputEntry.connect('key_press_event', self.move)
-        self.inputEntry.connect('changed', self.change) # self.change is needed by GObject or something
+        self.inputEntry.connect('changed', self.change)  # self.change is needed by GObject or something
         self.gui.vbox.pack_start(self.inputEntry, False)
         self.labelObject = gtk.Label((''))
         self.labelObject.set_usize(300, -1)
         self.gui.vbox.pack_start(self.labelObject, False)
 
-        #gui geometry
+        # gui geometry
         px, py = self.window.get_position()
         pw, ph = self.window.get_size()
         x, y = self.gui.get_position()
 
         if self.plugin.preferences['position'] == InstantsearchPlugin.POSITION_RIGHT:
-            self.gui.move((pw-300), 0)
+            self.gui.move((pw - 300), 0)
         elif self.plugin.preferences['position'] == InstantsearchPlugin.POSITION_CENTER:
             self.gui.resize(300, 100)
             self.gui.move(px + (pw / 2) - 150, py + (ph / 2) - 250)
@@ -147,31 +142,32 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.timeout = ""
         self.timeoutOpenPage = None
 
-
-    #lastPage = ""
-    #pageTitleOnly = False
+    # lastPage = ""
+    # pageTitleOnly = False
     menu = []
-    #queryTime = 0
 
-    def change(self, _): #widget, event,text
+    # queryTime = 0
+
+    def change(self, _):  # widget, event,text
         if self.timeout:
             gobject.source_remove(self.timeout)
         q = self.inputEntry.get_text()
-        #print("Change. {} {}".format(input, self.lastQuery))
+        # print("Change. {} {}".format(input, self.lastQuery))
         if q == self.lastQuery: return
         if q == self.title_match_char: return
-        if q and q[-1] == "∀": # easter egg: debug option for zim --standalone
+        if q and q[-1] == "∀":  # easter egg: debug option for zim --standalone
             q = q[:-1]
-            import ipdb; ipdb.set_trace()
+            import ipdb;
+            ipdb.set_trace()
         self.state = State.setCurrent(q)
 
         if not self.state.isFinished:
             self.isSubset = True if self.lastQuery and q.startswith(self.lastQuery) else False
             self.state.checkTitleSearch(self.title_match_char)
             self.startSearch()
-        else: # search completed before
-            #print("Search already cached.")
-            self.startSearch() # update the results in a page has been modified meanwhile (not if something got deleted in the notebook #16 )
+        else:  # search completed before
+            # print("Search already cached.")
+            self.startSearch()  # update the results in a page has been modified meanwhile (not if something got deleted in the notebook #16 )
             self.checkLast()
             self.soutMenu()
 
@@ -190,7 +186,8 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
         query = self.state.query
         menu = self.state.menu
-        isInQuery = re.compile(r"(^|:|\s|\()" + query).search  # 'te' matches this page titles: 'test' or 'Journal:test' or 'foo test' or 'foo (test)'
+        isInQuery = re.compile(
+            r"(^|:|\s|\()" + query).search  # 'te' matches this page titles: 'test' or 'Journal:test' or 'foo test' or 'foo (test)'
         if self.isSubset and len(query) < self.start_search_length:
             # letter(s) was/were added and full search has not yet been activated
             for path in _MenuItem.titles:
@@ -198,44 +195,46 @@ class InstantsearchMainWindowExtension(WindowExtension):
                     del menu[path]  # we pop out the result
                 else:
                     menu[path].sure = True
-        else: # perform new search in cached_titles
+        else:  # perform new search in cached_titles
             _MenuItem.titles = set()
             found = 0
             if self.state.firstSeen:
-                for path, pathLow in self.cached_titles: # quick search in titles
-                    if isInQuery(pathLow): # 'te' matches 'test' or 'Journal:test' etc
+                for path, pathLow in self.cached_titles:  # quick search in titles
+                    if isInQuery(pathLow):  # 'te' matches 'test' or 'Journal:test' etc
                         _MenuItem.titles.add(path)
-                        if query in path.lower() and query not in path.lower().split(":")[-1]: # "raz" in "raz:dva", but not in "dva"
-                            self.state.menu[":".join(path.split(":")[:-1])].bonus += 1 # 1 point for subpage
+                        if query in path.lower() and query not in path.lower().split(":")[
+                            -1]:  # "raz" in "raz:dva", but not in "dva"
+                            self.state.menu[":".join(path.split(":")[:-1])].bonus += 1  # 1 point for subpage
                             menu[path].bonus = -11
-                        menu[path].score += 10 # 10 points for title (zim default) (so that it gets displayed before search finishes)
+                        menu[
+                            path].score += 10  # 10 points for title (zim default) (so that it gets displayed before search finishes)
                         menu[path].intitle = True
                         menu[path].path = path
                         found += 1
-                        if found >= 10: # we dont want more than 10 results; we would easily match all of the pages
+                        if found >= 10:  # we dont want more than 10 results; we would easily match all of the pages
                             break
                     else:
                         menu[path].intitle = False
 
-        self.processMenu() # show for now results of title search
+        self.processMenu()  # show for now results of title search
 
         if len(query) >= self.start_search_length:
-            self.timeout = gobject.timeout_add(self.keystroke_delay, self.startZimSearch) # ideal delay between keystrokes
+            self.timeout = gobject.timeout_add(self.keystroke_delay, self.startZimSearch)  # ideal delay between keystrokes
 
     def startZimSearch(self):
         """ Starts search for the input. """
         self.timeout = ""
-        self.caret['altPos'] = 0 # possible position of caret - beginning
+        self.caret['altPos'] = 0  # possible position of caret - beginning
         s = '"*{}*"'.format(self.state.query) if self.plugin.preferences['isWildcarded'] else self.state.query
-        self.queryO = Query(unicode(s)) # beware when searching for unicode character. Update the row when going to Python3.
+        self.queryO = Query(unicode(s))  # beware when searching for unicode character. Update the row when going to Python3.
 
-        lastSel = self.selection if self.isSubset and self.state.previous.isFinished else None # it should be quicker to find the string, if we provide this subset from last time (in the case we just added a letter, so that the subset gets smaller)
+        lastSel = self.selection if self.isSubset and self.state.previous.isFinished else None  # it should be quicker to find the string, if we provide this subset from last time (in the case we just added a letter, so that the subset gets smaller)
         self.selection = SearchSelection(self.window.ui.notebook)
-        state = self.state # this is thread, so that self.state would can before search finishes
+        state = self.state  # this is thread, so that self.state would can before search finishes
         self.selection.search(self.queryO, selection=lastSel, callback=self._search_callback(self.state.rawQuery))
         state.isFinished = True
 
-        for item in list(state.menu): # remove all the items that we didnt encounter during the search
+        for item in list(state.menu):  # remove all the items that we didnt encounter during the search
             if not state.menu[item].sure:
                 del state.menu[item]
 
@@ -253,10 +252,12 @@ class InstantsearchMainWindowExtension(WindowExtension):
     def _search_callback(self, query):
         def _search_callback(results, path):
             if results is not None:
-                self._update_results(results, State.get(query)) # we finish the search even if another search is running. If we returned False, the search would be cancelled-
+                self._update_results(results, State.get(
+                    query))  # we finish the search even if another search is running. If we returned False, the search would be cancelled-
             while gtk.events_pending():
                 gtk.main_iteration(block=False)
             return True
+
         return _search_callback
 
     def _update_results(self, results, state):
@@ -268,20 +269,21 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
         state.lastResults = results
         for option in results.scores:
-            if state.pageTitleOnly and state.query not in option.name: # hledame jen v nazvu stranky
+            if state.pageTitleOnly and state.query not in option.name:  # hledame jen v nazvu stranky
                 continue
 
-            if option.name not in state.menu: # new item found
-                if state == self.state and option.name == self.caret['text']: # this is current search
-                    self.caret['altPos'] = len(state.menu)-1 #karet byl na tehle pozici, pokud se zuzil vyber, budeme vedet, kam karet opravne umistit
+            if option.name not in state.menu:  # new item found
+                if state == self.state and option.name == self.caret['text']:  # this is current search
+                    self.caret['altPos'] = len(
+                        state.menu) - 1  # karet byl na tehle pozici, pokud se zuzil vyber, budeme vedet, kam karet opravne umistit
             if option.name not in state.menu or (state.menu[option.name].bonus < 0 and state.menu[option.name].score == 0):
                 changed = True
             if not state.menu[option.name].sure:
                 state.menu[option.name].sure = True
                 changed = True
-            state.menu[option.name].score = results.scores[option] #zaradit mezi moznosti
+            state.menu[option.name].score = results.scores[option]  # zaradit mezi moznosti
 
-        if changed: # we added a page
+        if changed:  # we added a page
             self.processMenu(state=state, sort=False)
         else:
             pass
@@ -292,11 +294,13 @@ class InstantsearchMainWindowExtension(WindowExtension):
             state = self.state
 
         if sort:
-            state.items = sorted(state.menu, reverse=True, key=lambda item: (state.menu[item].intitle, state.menu[item].score + state.menu[item].bonus, -item.count(":"), item))
-        else: # when search results are being updated, it's good when the order doesnt change all the time. So that the first result does not become for a while 10th and then become first back.
+            state.items = sorted(state.menu, reverse=True, key=lambda item: (
+            state.menu[item].intitle, state.menu[item].score + state.menu[item].bonus, -item.count(":"), item))
+        else:  # when search results are being updated, it's good when the order doesnt change all the time. So that the first result does not become for a while 10th and then become first back.
             state.items = sorted(state.menu, reverse=True, key=lambda item: (state.menu[item].intitle, -state.menu[item].lastOrder))
 
-        state.items = [item for item in state.items if (state.menu[item].score + state.menu[item].bonus) > 0] # i dont know why there are items with 0 score
+        state.items = [item for item in state.items if
+                       (state.menu[item].score + state.menu[item].bonus) > 0]  # i dont know why there are items with 0 score
 
         if state == self.state:
             self.soutMenu()
@@ -305,9 +309,10 @@ class InstantsearchMainWindowExtension(WindowExtension):
         """ Displays menu and handles caret position. """
         if self.timeoutOpenPage:
             gobject.source_remove(self.timeoutOpenPage)
-        self.gui.resize(300, 100) # reset size
+        self.gui.resize(300, 100)  # reset size
         # treat possible caret deflection
-        if self.caret['pos'] < 0 or self.caret['pos'] > len(self.state.items)-1: # place the caret to the beginning or the end of list
+        if self.caret['pos'] < 0 or self.caret['pos'] > len(
+                self.state.items) - 1:  # place the caret to the beginning or the end of list
             self.caret['pos'] = self.caret['altPos']
 
         text = ""
@@ -316,7 +321,7 @@ class InstantsearchMainWindowExtension(WindowExtension):
             score = self.state.menu[item].score + self.state.menu[item].bonus
             self.state.menu[item].lastOrder = i
             if i == self.caret['pos']:
-                self.caret['text'] = item # caret is at this position
+                self.caret['text'] = item  # caret is at this position
                 text += '→ {} ({}) {}\n'.format(item, score, "" if self.state.menu[item].sure else "?")
             else:
                 try:
@@ -330,7 +335,8 @@ class InstantsearchMainWindowExtension(WindowExtension):
         self.menuPage = Path(self.caret['text'] if len(self.state.items) else self.originalPage)
 
         if not displayImmediately:
-            self.timeoutOpenPage = gobject.timeout_add(self.keystroke_delay, self._open_page, self.menuPage) # ideal delay between keystrokes
+            self.timeoutOpenPage = gobject.timeout_add(self.keystroke_delay, self._open_page,
+                                                       self.menuPage)  # ideal delay between keystrokes
         else:
             self._open_page(self.menuPage)
 
@@ -367,12 +373,12 @@ class InstantsearchMainWindowExtension(WindowExtension):
 
     def _open_page(self, page, excludeFromHistory=True):
         """ Open page and highlight matches """
-        self.timeoutOpenPage = None # no delayed page will be open
+        self.timeoutOpenPage = None  # no delayed page will be open
         if self.isClosed == True:
             return
         if page and page.name and page.name != self.lastPage:
             self.lastPage = page.name
-            #print("*** HISTORY BEF", self.window.ui.history._history[-3:])
+            # print("*** HISTORY BEF", self.window.ui.history._history[-3:])
             self.window.ui.open_page(page)
             if excludeFromHistory:
                 # there is no public API, so lets use protected _history instead
@@ -383,20 +389,21 @@ class InstantsearchMainWindowExtension(WindowExtension):
             self.window.ui.history.append(page)
 
         # Popup find dialog with same query
-        if self.queryO:# and self.queryO.simple_match:
+        if self.queryO:  # and self.queryO.simple_match:
             string = self.state.query
-            string = string.strip('*') # support partial matches
+            string = string.strip('*')  # support partial matches
             if self.plugin.preferences['highlight_search']:
                 self._get_mainwindow().pageview.show_find(string, highlight=True)
 
-    def _get_mainwindow(self): # #18
+    def _get_mainwindow(self):  # #18
         try:
             return self.window.ui._mainwindow
         except AttributeError:
             return self.window.ui.mainwindow
 
+
 class State:
-    _states = {} # the cache is held till the end of zim process. I dont know if it poses a problem after hours of use and intensive searching.
+    _states = {}  # the cache is held till the end of zim process. I dont know if it poses a problem after hours of use and intensive searching.
     _current = None
 
     @classmethod
@@ -426,7 +433,7 @@ class State:
         self.items = []
         self.isFinished = False
         self.query = query
-        self.rawQuery = query # including '!' sign for title only search
+        self.rawQuery = query  # including '!' sign for title only search
         self.previous = previous
         self.pageTitleOnly = False
         if previous:
@@ -438,7 +445,7 @@ class State:
 
     def checkTitleSearch(self, title_match_char):
         """ Check if we query page titles only, based on the special '!' sign in the query text. """
-        if self.query.startswith(title_match_char): # first char is "!" -> searches in page name only
+        if self.query.startswith(title_match_char):  # first char is "!" -> searches in page name only
             self.pageTitleOnly = True
             self.query = self.query[len(title_match_char):].lower()
         else:
@@ -446,12 +453,12 @@ class State:
 
 
 class _MenuItem():
-    titles = set() # items that are page-titles
+    titles = set()  # items that are page-titles
 
     def __init__(self):
         self.path = None
-        self.score = 0 # defined by SearchSelection
-        self.bonus = 0 # defined locally
-        self.intitle = False # query is in title
-        self.sure = True # it is certain item is in the list (it may be just a rudiment from last search)
+        self.score = 0  # defined by SearchSelection
+        self.bonus = 0  # defined locally
+        self.intitle = False  # query is in title
+        self.sure = True  # it is certain item is in the list (it may be just a rudiment from last search)
         self.lastOrder = 0
