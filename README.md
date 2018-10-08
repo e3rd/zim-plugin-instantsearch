@@ -4,6 +4,10 @@ Search as you type in Zim, in similar manner to OneNote Ctrl+E.
 When you hit Ctrl+E, small window opens, you can type in. As you type third letter, every page that matches your search is listed. You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to cancel.
 Much quicker than current Zim search.
 
+# Important notice
+
+* Current master works on [zim-next branch](https://github.com/jaap-karssenberg/zim-desktop-wiki/tree/next) that is to be merged since few months.
+* With Zim 0.68 you may want to use the [current release](https://github.com/e3rd/zim-plugin-instantsearch/releases) which is 0.68 compatible.
 
 ### Working with & Feedback
 Known to work on:
