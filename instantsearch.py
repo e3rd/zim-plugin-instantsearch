@@ -4,20 +4,16 @@
 # Search instantly as you type. Edvard Rejthar
 # https://github.com/e3rd/zim-plugin-instantsearch
 #
-import logging
 from collections import defaultdict
 from copy import deepcopy
 
 from gi.repository import GObject, Gtk, Gdk
 from zim.actions import action
+from zim.gui.mainwindow import MainWindowExtension
 from zim.gui.widgets import Dialog
 from zim.gui.widgets import InputEntry
-# from zim.index import IndexPath
-from zim.notebook import Path
+from zim.history import HistoryList
 from zim.plugins import PluginClass
-from zim.gui.mainwindow import MainWindowExtension
-#from zim.plugins import WindowExtension
-#from zim.plugins import extends
 from zim.search import *
 
 logger = logging.getLogger('zim.plugins.instantsearch')
@@ -35,6 +31,7 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
 (V1.4)
 '''),
         'author': "Edvard Rejthar"
+
     }
 
     global LINES_NONE, LINES_HORIZONTAL, LINES_VERTICAL, LINES_BOTH  # Hack - to make sure translation is loaded
@@ -59,19 +56,7 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
 
 
 class InstantsearchMainWindowExtension(MainWindowExtension):
-    uimanager_xml = '''
-    <ui>
-    <menubar name='menubar'>
-            <menu action='tools_menu'>
-                    <placeholder name='plugin_items'>
-                            <menuitem action='instantsearch'/>
-                    </placeholder>
-            </menu>
-    </menubar>
-    </ui>
-    '''
-
-    gui = "";
+    gui = ""
 
     @action(_('_Instantsearch'), accelerator='<ctrl>e')  # T: menu item
     def instantsearch(self):
@@ -83,6 +68,7 @@ class InstantsearchMainWindowExtension(MainWindowExtension):
         self.queryO = None
         self.caret = {'pos': 0, 'altPos': 0, 'text': ""}  # cursor position
         self.originalPage = self.window.page.name  # we return here after escape
+        self.originalHistory = list(self.window.history.uistate["list"])
         self.selection = None
         if not self.plugin.preferences['isCached']:
             # reset last search results
@@ -223,8 +209,7 @@ class InstantsearchMainWindowExtension(MainWindowExtension):
         """ Starts search for the input. """
         self.timeout = ""
         self.caret['altPos'] = 0  # possible position of caret - beginning
-        s = '"*{}*"'.format(self.state.query) if self.plugin.preferences['isWildcarded'] else self.state.query
-        self.queryO = Query(s)  # Xunicode(s) beware when searching for unicode character. Update the row when going to Python3.
+        self.queryO = Query('"*{}*"'.format(self.state.query) if self.plugin.preferences['isWildcarded'] else self.state.query)
 
         lastSel = self.selection if self.isSubset and self.state.previous.isFinished else None  # it should be quicker to find the string, if we provide this subset from last time (in the case we just added a letter, so that the subset gets smaller)
         self.selection = SearchSelection(self.window.notebook)
@@ -253,7 +238,7 @@ class InstantsearchMainWindowExtension(MainWindowExtension):
                 self._update_results(results, State.get(
                     query))  # we finish the search even if another search is running. If we returned False, the search would be cancelled-
             while Gtk.events_pending():
-                Gtk.main_iteration_do(blocking=False)
+                Gtk.main_iteration()
             return True
 
         return _search_callback
@@ -293,7 +278,7 @@ class InstantsearchMainWindowExtension(MainWindowExtension):
 
         if sort:
             state.items = sorted(state.menu, reverse=True, key=lambda item: (
-            state.menu[item].intitle, state.menu[item].score + state.menu[item].bonus, -item.count(":"), item))
+                state.menu[item].intitle, state.menu[item].score + state.menu[item].bonus, -item.count(":"), item))
         else:  # when search results are being updated, it's good when the order doesnt change all the time. So that the first result does not become for a while 10th and then become first back.
             state.items = sorted(state.menu, reverse=True, key=lambda item: (state.menu[item].intitle, -state.menu[item].lastOrder))
 
@@ -355,30 +340,34 @@ class InstantsearchMainWindowExtension(MainWindowExtension):
 
         if keyname == "Escape":
             self._open_original()
-            # GTK closes the windows itself on Escape, no self.close() needed
+            self.isClosed = True  # few more timeouts are on the way probably
+            # GTK closes the windows itself on Escape, no self.close() call needed
 
         return
 
-    ## Safely closes
-    # Xwhen closing directly, Python gave allocation error
     def close(self):
+        """ Safely (closes gets called when hit Enter) """
         if not self.isClosed:
             self.isClosed = True
             self.gui.emit("close")
 
     def _open_original(self):
         self._open_page(Path(self.originalPage))
+        l = HistoryList([])  # we already have HistoryPath objects in the self.originalHistory, we cannot add them in te constructor
+        l.extend(self.originalHistory)
+        self.window.history.uistate["list"] = l
 
     def _open_page(self, page, excludeFromHistory=True):
         """ Open page and highlight matches """
         self.timeoutOpenPage = None  # no delayed page will be open
-        if self.isClosed == True:
+        if self.isClosed is True:
             return
-        if page and page.name and page.name != self.lastPage:
+        # print("*** History1: ", self.window.history._history, self.window.history._current)
+        if page and page.name and page.name != self.lastPage:  # self.lastPage:
             self.lastPage = page.name
-            # print("*** HISTORY BEF", self.window.ui.history._history[-3:])
-            self.window.open_page(page)
-            if excludeFromHistory:
+            print("OPENING",page)
+            self.window.navigation.open_page(page)
+            if excludeFromHistory and list(self.window.history._history)[-1:][0].name != self.originalPage:
                 # there is no public API, so lets use protected _history instead
                 self.window.history._history.pop()
                 self.window.history._current = len(self.window.history._history) - 1
@@ -392,6 +381,7 @@ class InstantsearchMainWindowExtension(MainWindowExtension):
             string = string.strip('*')  # support partial matches
             if self.plugin.preferences['highlight_search']:
                 self.window.pageview.show_find(string, highlight=True)
+
 
 class State:
     _states = {}  # the cache is held till the end of zim process. I dont know if it poses a problem after hours of use and intensive searching.
