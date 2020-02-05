@@ -365,7 +365,7 @@ class InstantsearchMainWindowExtension(MainWindowExtension):
         # print("*** History1: ", self.window.history._history, self.window.history._current)
         if page and page.name and page.name != self.lastPage:  # self.lastPage:
             self.lastPage = page.name
-            print("OPENING",page)
+            # print("OPENING",page)
             self.window.navigation.open_page(page)
             if excludeFromHistory and list(self.window.history._history)[-1:][0].name != self.originalPage:
                 # there is no public API, so lets use protected _history instead
