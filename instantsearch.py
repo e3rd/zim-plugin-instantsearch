@@ -29,13 +29,12 @@ As you type third letter, every page that matches your search is listed.
 You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to cancel.
  Much quicker than current Zim search.
 
-(V1.4)
+(V1.1)
 '''),
         'author': "Edvard Rejthar"
 
     }
 
-    global LINES_NONE, LINES_HORIZONTAL, LINES_VERTICAL, LINES_BOTH  # Hack - to make sure translation is loaded
     POSITION_CENTER = _('center')  # T: option value
     POSITION_RIGHT = _('right')  # T: option value
 
@@ -45,11 +44,11 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
         ('start_search_length', 'int', _('Start the search when number of letters written'), 3, (0, 10)),
         ('keystroke_delay', 'int', _('Keystroke delay'), 150, (0, 5000)),
         ('highlight_search', 'bool', _('Highlight search'), True),
-        ('ignore_subpages', 'bool', _("Ignore subpages (if ignored, search 'linux'"
+        ('ignore_subpages', 'bool', _("Ignore sub-pages (if ignored, search 'linux'"
                                       " would return page:linux but not page:linux:subpage"
-                                      " (if in the subpage, there is no occurece of string 'linux')"), True),
-        ('isWildcarded', 'bool', _("Append wildcards to the search string: *string*"), True),
-        ('isCached', 'bool',
+                                      " (if in the subpage, there is no occurrence of string 'linux')"), True),
+        ('is_wildcarded', 'bool', _("Append wildcards to the search string: *string*"), True),
+        ('is_cached', 'bool',
          _("Cache results of a search to be used in another search. (Till the end of zim process.)"), True),
         ('open_when_unique', 'bool', _('When only one page is found, open it automatically.'), True),
         ('position', 'choice', _('Popup position'), POSITION_RIGHT, (POSITION_RIGHT, POSITION_CENTER))
@@ -81,7 +80,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.open_when_unique = None
         self.input_entry = None
         self.label_object = None
-        self.state = None
+        self.state: "State" = None
         self.is_subset = None
 
     @action(_('_Instant search'), accelerator='<ctrl>e')  # T: menu item
@@ -89,14 +88,13 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
         # init
         self.cached_titles = []
-        # self.menu = defaultdict(_MenuItem)
         self.last_query = ""  # previous user input
         self.query_o = None
         self.caret = {'pos': 0, 'altPos': 0, 'text': ""}  # cursor position
         self.original_page = self.window.page.name  # we return here after escape
         self.original_history = list(self.window.history.uistate["list"])
         self.selection = None
-        if not self.plugin.preferences['isCached']:
+        if not self.plugin.preferences['is_cached']:
             # reset last search results
             State.reset()
         self.menu_page = None
@@ -111,10 +109,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
         # building quick title cache
         def build(start=""):
-            if hasattr(self.window.notebook, 'pages'):
-                o = self.window.notebook.pages
-            else:  # for Zim 0.66-
-                o = self.window.notebook.index
+            o = self.window.notebook.pages
             for s in o.list_pages(Path(start or ":")):
                 start2 = (start + ":" if start else "") + s.basename
                 self.cached_titles.append((start2, start2.lower()))
@@ -192,9 +187,9 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         """ Search string has certainly changed. We search in indexed titles and/or we start zim search.
 
         Normally, zim gives 11 points bonus if the search-string appears in the titles.
-        If we are ignoring subpages, the search "foo" will match only page "journal:foo",
+        If we are ignoring sub-pages, the search "foo" will match only page "journal:foo",
         but not "journal:foo:subpage" (and score of the parent page will get slightly higher by 1.)
-        However, if there are occurences of the string in the fulltext of the subpage,
+        However, if there are occurrences of the string in the fulltext of the subpage,
         subpage remains in the result, but gets bonus only 2 points (not 11).
 
         """
@@ -241,7 +236,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         """ Starts search for the input. """
         self.timeout = ""
         self.caret['altPos'] = 0  # possible position of caret - beginning
-        self.query_o = Query(f'"*{self.state.query}*"' if self.plugin.preferences['isWildcarded'] else self.state.query)
+        self.query_o = Query(f'"*{self.state.query}*"' if self.plugin.preferences['is_wildcarded']
+                             else self.state.query)
 
         # it should be quicker to find the string, if we provide this subset from last time
         # (in the case we just added a letter, so that the subset gets smaller)
@@ -287,12 +283,12 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
         state.lastResults = results
         for option in results.scores:
-            if state.page_title_only and state.query not in option.name:  # hledame jen v nazvu stranky
+            if state.page_title_only and state.query not in option.name:  # searching in the page name only
                 continue
 
             if option.name not in state.menu:  # new item found
                 if state == self.state and option.name == self.caret['text']:  # this is current search
-                    # karet byl na tehle pozici, pokud se zuzil vyber, budeme vedet, kam karet opravne umistit
+                    # caret was on this positions; if selection narrows we know where to re-place the caret back                    
                     self.caret['altPos'] = len(state.menu) - 1
             if option.name not in state.menu or (
                     state.menu[option.name].bonus < 0 and state.menu[option.name].score == 0):
@@ -300,7 +296,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             if not state.menu[option.name].sure:
                 state.menu[option.name].sure = True
                 changed = True
-            state.menu[option.name].score = results.scores[option]  # zaradit mezi moznosti
+            state.menu[option.name].score = results.scores[option]  # includes into options
 
         if changed:  # we added a page
             self.process_menu(state=state, sort=False)
@@ -321,9 +317,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             state.items = sorted(state.menu, reverse=True,
                                  key=lambda item: (state.menu[item].in_title, -state.menu[item].last_order))
 
-        state.items = [item for item in state.items if
-                       (state.menu[item].score + state.menu[
-                           item].bonus) > 0]  # i dont know why there are items with 0 score
+        # I do not know why there are items with score 0
+        state.items = [item for item in state.items if (state.menu[item].score + state.menu[item].bonus) > 0]
 
         if state == self.state:
             self.sout_menu()
@@ -390,10 +385,11 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
     def _open_original(self):
         self._open_page(Path(self.original_page))
         # we already have HistoryPath objects in the self.original_history, we cannot add them in te constructor
-        l = HistoryList([])
-        l.extend(self.original_history)
-        self.window.history.uistate["list"] = l
+        hl = HistoryList([])
+        hl.extend(self.original_history)
+        self.window.history.uistate["list"] = hl
 
+    # noinspection PyProtectedMember
     def _open_page(self, page, exclude_from_history=True):
         """ Open page and highlight matches """
         self.timeout_open_page = None  # no delayed page will be open
@@ -432,7 +428,7 @@ class State:
         State._states = {}
 
     @classmethod
-    def set_current(cls, query):
+    def set_current(cls, query) -> "State":
         """ Returns other state.
             query = raw_query (including '!' sign for title only search)
         """
@@ -454,7 +450,7 @@ class State:
         self.is_finished = False
         self.query = query
         self.raw_query = query  # including '!' sign for title only search
-        self.previous = previous
+        self.previous: "State" = previous
         self.page_title_only = False
         self.first_seen = None
         if previous:

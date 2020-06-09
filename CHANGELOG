@@ -1,4 +1,5 @@
 # 1.2 Python3.6 (unreleased)
+* CHANGED: Check plugin preferences, some of them (wildcard, using cache) resets to their defaults
 
 # 1.1 last Python3.5- (2020-06-09)
 
