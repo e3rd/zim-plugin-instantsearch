@@ -1,0 +1,24 @@
+# 1.2 Python3.6 (unreleased)
+
+# 1.1 last Python3.5- (2020-06-09)
+
+# 1.04 0.68 compatible (2018-06-18)
+New config options, Tab and Shift+Tab for moving caret
+
+# 1.03 Titles first (2017-01-16)
+Since I made changes in this commit, the searching become even more smooth for me. The page titles are given the priority now to be ordered in the beginning.
+
+# 1.02 History excluded (2016-08-27)
+Traversing the search results shouldnt fullfill your Zim history now ;)
+
+# 1.01 #13 (2016-08-27)
+many bug fixes, plugin is more reliable
+
+# 1.0 Instant search for Zim (2016-06-03)
+* For first few keystrokes, there is ultraquick search in page titles and then a reliable internal zim search is processed.
+* more reliable search (less bugs)
+* if I write "linux", the search for "linux" ends first, and than for "linu", "lin" in the background
+* if I write "linu" and then "linux", the results are updated only, they are not cleared.
+* if I write "linux" and then I paste from clipboard word "liposuction", the results are updated only, not cleared. So that if there is a page with both words "linux" and "liposuction", the page doesn't vanish for a while from menu. You wouldn't say you need this feature but I am convinced that if it disappeared, you would be confused and disappointed.
+* if the searched string occures only in the page title and the only as one of the parent names, the results gets omitted. It's useful. When I search for "linux", I want to see page "os:linux", but not "os:linux:technologies:mydisk:foo:bar".
+* While traversing the results by arrows, the page is displayed with tiny delay so that you can quickly traverse all the list.
