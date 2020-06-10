@@ -7,7 +7,6 @@
 from collections import defaultdict
 from copy import deepcopy
 from time import time
-import sys
 
 from gi.repository import GObject, Gtk, Gdk
 from gi.repository.GLib import markup_escape_text
@@ -48,8 +47,8 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
         ('start_search_length', 'int', _('Start the search when number of letters written'), 3, (0, 10)),
         ('keystroke_delay', 'int', _('Keystroke delay for displaying preview'), 150, (0, 5000)),
         ('keystroke_delay_open', 'int', _('Keystroke delay for opening page'
-                                     '\n(Low value might prevent search list smooth navigation'
-                                     ' if page is big.)'), 1500, (0, 5000)),
+                                          '\n(Low value might prevent search list smooth navigation'
+                                          ' if page is big.)'), 1500, (0, 5000)),
         ('highlight_search', 'bool', _('Highlight search'), True),
         ('ignore_subpages', 'bool', _("Ignore sub-pages (if ignored, search 'linux'"
                                       " would return page:linux but not page:linux:subpage"
@@ -160,8 +159,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
         self.gui.show_all()
 
-        self.label_var = "" # XX remove?
-        self.timeout = "" # XX remove?
+        self.label_var = ""  # XX remove?
+        self.timeout = ""  # XX remove?
 
     # last_page = ""
     # page_title_only = False
@@ -386,7 +385,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             self.timeout_open_page = GObject.timeout_add(self.keystroke_delay_open, self._open_page,
                                                          self.menu_page)  # ideal delay between keystrokes
             self.timeout_open_page_preview = GObject.timeout_add(self.keystroke_delay, self._open_page_preview,
-                                                         self.menu_page)  # ideal delay between keystrokes
+                                                                 self.menu_page)  # ideal delay between keystrokes
         else:
             self._open_page(self.menu_page)
 
@@ -448,7 +447,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         # open page
         if page and page.name and page.name != self.last_page:
             self.last_page = page.name
-            print("OPENING",page)
+            print("OPENING", page)
             self.window.navigation.open_page(page)
             if exclude_from_history and list(self.window.history._history)[-1:][0].name != self.original_page:
                 # there is no public API, so lets use protected _history instead
@@ -484,19 +483,22 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         if page and page.name and page.name != self.last_page_preview and not self.is_closed:
             # show preview pane and hide current text editor
             self.last_page_preview = page.name
-            self.label_preview.set_markup(self._get_preview_text(page, self.state.query))
+            try:
+                lines = markup_escape_text(self.window.notebook.layout.map_page(page)[0].read()).splitlines()
+            except newfs.base.FileNotFoundError:
+                lines = [f"page {page} has no content"]  # page has not been created yet
+
+            if len(lines) < 50:  # the file length is very small, do not use preview here
+                return self._open_page(page, exclude_from_history=True)
+            self.label_preview.set_markup(self._get_preview_text(lines, self.state.query))
 
             # shows GUI (hidden in self._hide_preview()
             self.preview_pane.show_all()
             # noinspection PyProtectedMember
             self.window.pageview._hack_hbox.hide()
 
-    def _get_preview_text(self, page, query):
-        max_lines = 100
-        try:
-            lines = markup_escape_text(self.window.notebook.layout.map_page(page)[0].read()).splitlines()
-        except newfs.base.FileNotFoundError:
-            lines = [f"page {page} has no content"]  # page has not been created yet
+    def _get_preview_text(self, lines, query):
+        max_lines = 200
 
         # check if the file is a Zim markup file and if so, skip header
         if lines[0] == 'Content-Type: text/x-zim-wiki':
@@ -506,7 +508,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
                     break
 
         # grep some lines
-        bold = re.compile("("+query+")", re.IGNORECASE)
+        bold = re.compile("(" + query + ")", re.IGNORECASE)
         keep_all = len(lines) < max_lines
         g = iter(lines)
         chosen = [next(g)]  # always include header as the first line, even if it does not contain the query
