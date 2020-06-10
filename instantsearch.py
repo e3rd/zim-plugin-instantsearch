@@ -6,8 +6,11 @@
 #
 from collections import defaultdict
 from copy import deepcopy
+from time import time
+import sys
 
 from gi.repository import GObject, Gtk, Gdk
+from zim import newfs
 from zim.actions import action
 from zim.gui.mainwindow import MainWindowExtension
 from zim.gui.widgets import Dialog
@@ -29,7 +32,7 @@ As you type third letter, every page that matches your search is listed.
 You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to cancel.
  Much quicker than current Zim search.
 
-(V1.1)
+(V1.2)
 '''),
         'author': "Edvard Rejthar"
 
@@ -42,7 +45,10 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
         # T: label for plugin preferences dialog
         ('title_match_char', 'string', _('Match title only if query starting by this char'), "!"),
         ('start_search_length', 'int', _('Start the search when number of letters written'), 3, (0, 10)),
-        ('keystroke_delay', 'int', _('Keystroke delay'), 150, (0, 5000)),
+        ('keystroke_delay', 'int', _('Keystroke delay for displaying preview'), 150, (0, 5000)),
+        ('keystroke_delay_open', 'int', _('Keystroke delay for opening page'
+                                     '\n(Low value might prevent search list smooth navigation'
+                                     ' if page is big.)'), 1500, (0, 5000)),
         ('highlight_search', 'bool', _('Highlight search'), True),
         ('ignore_subpages', 'bool', _("Ignore sub-pages (if ignored, search 'linux'"
                                       " would return page:linux but not page:linux:subpage"
@@ -63,7 +69,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         super().__init__(plugin, window)
         self.label_var = None
         self.timeout = None
-        self.timeout_open_page = None
+        self.timeout_open_page = None  # will open page after keystroke delay
+        self.timeout_open_page_preview = None  # will open page after keystroke delay
         self.cached_titles = None
         self.last_query = None
         self.query_o = None
@@ -73,15 +80,21 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.selection = None
         self.menu_page = None
         self.is_closed = None
-        self.last_page = None
-        self.title_match_char = None
-        self.start_search_length = None
-        self.keystroke_delay = None
-        self.open_when_unique = None
-        self.input_entry = None
+        self.last_page = self.last_page_preview = None
         self.label_object = None
+        self.input_entry = None
         self.state: "State" = None
         self.is_subset = None
+        self.label_preview = None
+        self.preview_pane = None
+        self._last_update = 0
+
+        # preferences
+        self.title_match_char = self.plugin.preferences['title_match_char']
+        self.start_search_length = self.plugin.preferences['start_search_length']
+        self.keystroke_delay_open = self.plugin.preferences['keystroke_delay_open']
+        self.keystroke_delay = self.plugin.preferences['keystroke_delay']
+        self.open_when_unique = self.plugin.preferences['open_when_unique']
 
     @action(_('_Instant search'), accelerator='<ctrl>e')  # T: menu item
     def instant_search(self):
@@ -100,12 +113,6 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.menu_page = None
         self.is_closed = False
         self.last_page = None
-
-        # preferences
-        self.title_match_char = self.plugin.preferences['title_match_char']
-        self.start_search_length = self.plugin.preferences['start_search_length']
-        self.keystroke_delay = self.plugin.preferences['keystroke_delay']
-        self.open_when_unique = self.plugin.preferences['open_when_unique']
 
         # building quick title cache
         def build(start=""):
@@ -134,6 +141,14 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         pw, ph = self.window.get_size()
         # Xx, y = self.gui.get_position()
 
+        self.label_preview = Gtk.Label(label='...loading...')
+        # not sure if this has effect, longer lines without spaces still make window inflate
+        self.label_preview.set_line_wrap(True)
+        self.label_preview.set_xalign(0)  # align to the left
+        self.preview_pane = Gtk.VBox()
+        self.preview_pane.pack_start(self.label_preview, False, False, 5)
+        self.window.pageview.pack_start(self.preview_pane, False, False, 5)
+
         if self.plugin.preferences['position'] == InstantSearchPlugin.POSITION_RIGHT:
             self.gui.move((pw - 300), 0)
         elif self.plugin.preferences['position'] == InstantSearchPlugin.POSITION_CENTER:
@@ -144,9 +159,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
         self.gui.show_all()
 
-        self.label_var = ""
-        self.timeout = ""
-        self.timeout_open_page = None
+        self.label_var = "" # XX remove?
+        self.timeout = "" # XX remove?
 
     # last_page = ""
     # page_title_only = False
@@ -245,6 +259,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.selection = SearchSelection(self.window.notebook)
         state = self.state  # this is thread, so that self.state would can before search finishes
         self.selection.search(self.query_o, selection=last_sel, callback=self._search_callback(self.state.raw_query))
+        self._update_results(self.selection, State.get(self.state.raw_query), force=True)
+
         state.is_finished = True
 
         for item in list(state.menu):  # remove all the items that we didnt encounter during the search
@@ -274,11 +290,18 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
         return _search_callback
 
-    def _update_results(self, results, state):
+    def _update_results(self, results, state, force=False):
         """
         This method may run many times, due to the _update_results, which are updated many times.
         I may set that _update_results would run only once, but this is nice - the results are appearing one by one.
         """
+        if not force and time() < self._last_update + 0.2:
+            # if update callback called earlier than before 200 ms, ignore
+            # If every callback is counted, it takes 3500 ms to build a result set.
+            # If 0.6 -> 2300 ms, 0.3 -> 2600 ms, 0.1 -> 2800 ms
+            return
+        self._last_update = time()
+
         changed = False
 
         state.lastResults = results
@@ -327,6 +350,10 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         """ Displays menu and handles caret position. """
         if self.timeout_open_page:
             GObject.source_remove(self.timeout_open_page)
+            self.timeout_open_page = None
+        if self.timeout_open_page_preview:
+            GObject.source_remove(self.timeout_open_page_preview)
+            self.timeout_open_page_preview = None
         self.gui.resize(300, 100)  # reset size
         # treat possible caret deflection
         if self.caret['pos'] < 0 or self.caret['pos'] > len(
@@ -349,7 +376,9 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.menu_page = Path(self.caret['text'] if len(self.state.items) else self.original_page)
 
         if not display_immediately:
-            self.timeout_open_page = GObject.timeout_add(self.keystroke_delay, self._open_page,
+            self.timeout_open_page = GObject.timeout_add(self.keystroke_delay_open, self._open_page,
+                                                         self.menu_page)  # ideal delay between keystrokes
+            self.timeout_open_page_preview = GObject.timeout_add(self.keystroke_delay, self._open_page_preview,
                                                          self.menu_page)  # ideal delay between keystrokes
         else:
             self._open_page(self.menu_page)
@@ -372,7 +401,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         if key_name == "Escape":
             self._open_original()
             self.is_closed = True  # few more timeouts are on the way probably
-            # GTK closes the windows itself on Escape, no self.close() call needed
+            # no self.close() call needed, GTK emits this itself on Escape
 
         return
 
@@ -381,6 +410,10 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         if not self.is_closed:
             self.is_closed = True
             self.gui.emit("close")
+
+        # remove preview pane and show current text editor
+        self._hide_preview()
+        self.preview_pane.destroy()
 
     def _open_original(self):
         self._open_page(Path(self.original_page))
@@ -392,13 +425,23 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
     # noinspection PyProtectedMember
     def _open_page(self, page, exclude_from_history=True):
         """ Open page and highlight matches """
-        self.timeout_open_page = None  # no delayed page will be open
-        if self.is_closed is True:
-            return
+        print("OPEN PAGE CALL", page)
+        self._hide_preview()
+        if self.timeout_open_page:  # no delayed page will be open
+            GObject.source_remove(self.timeout_open_page)
+            self.timeout_open_page = None
+        if self.timeout_open_page_preview:  # no delayed preview page will be open
+            GObject.source_remove(self.timeout_open_page_preview)
+            self.timeout_open_page_preview = None
+
+        # if self.is_closed is True:
+        #     return
         # print("*** History1: ", self.window.history._history, self.window.history._current)
-        if page and page.name and page.name != self.last_page:  # self.last_page:
+
+        # open page
+        if page and page.name and page.name != self.last_page:
             self.last_page = page.name
-            # print("OPENING",page)
+            print("OPENING",page)
             self.window.navigation.open_page(page)
             if exclude_from_history and list(self.window.history._history)[-1:][0].name != self.original_page:
                 # there is no public API, so lets use protected _history instead
@@ -414,6 +457,64 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             string = string.strip('*')  # support partial matches
             if self.plugin.preferences['highlight_search']:
                 self.window.pageview.show_find(string, highlight=True)
+
+    def _hide_preview(self):
+        self.preview_pane.hide()
+        # noinspection PyProtectedMember
+        self.window.pageview._hack_hbox.show()
+
+    def _open_page_preview(self, page):
+        """ Open preview which is far faster then loading and
+         building big parse trees into text editor buffer when opening page. """
+        # note: if the dialog is already closed, we do not want a preview to open, but page still can be open
+        # (ex: after hitting Enter the dialog can close before opening the page)
+
+        if self.timeout_open_page_preview:
+            # no delayed preview page will be open, however self.timeout_open_page might be still running
+            GObject.source_remove(self.timeout_open_page_preview)
+            self.timeout_open_page_preview = None
+
+        if page and page.name and page.name != self.last_page_preview and not self.is_closed:
+            # show preview pane and hide current text editor
+            self.last_page_preview = page.name
+            self.label_preview.set_text(self._get_preview_text(page, self.state.query))
+
+            # shows GUI (hidden in self._hide_preview()
+            self.preview_pane.show_all()
+            # noinspection PyProtectedMember
+            self.window.pageview._hack_hbox.hide()
+
+    def _get_preview_text(self, page, query):
+        max_lines = 100
+        try:
+            lines = self.window.notebook.layout.map_page(page)[0].readlines()
+        except newfs.base.FileNotFoundError:
+            lines = [f"page {page} has no content"]  # page has not been created yet
+
+        # check if the file is a Zim markup file and if so, skip header
+        if lines[0] == 'Content-Type: text/x-zim-wiki\n':
+            for i, line in enumerate(lines):
+                if line == "\n":
+                    lines = lines[i + 1:]
+                    break
+
+        if len(lines) > max_lines:  # file is too long which would result the preview to not be smooth
+            # grep some lines
+            g = iter(lines)
+            chosen = [next(g)]  # always include header as the first line, even if it does not contain the query
+            for line in g:
+                if query in line.lower():
+                    chosen.append(line)
+            if len(chosen) > 1:  # something has been found
+                # query has been found (it might not, ex: query "foo" would not find line with a bold 'o': "f**o**o"
+                chosen.append("...")
+                lines = chosen
+
+        if len(lines) > max_lines:
+            lines = lines[:max_lines]
+            lines.append("...")
+
+        return "".join(line for line in lines)
 
 
 class State:

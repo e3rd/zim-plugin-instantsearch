@@ -1,5 +1,7 @@
 # 1.2 Python3.6 (unreleased)
 * CHANGED: Check plugin preferences, some of them (wildcard, using cache) resets to their defaults
+* preview: When navigating search menu, the page is previewed first after 150 ms by default and open after 1 500 ms. When page is not very small, navigation stuck when displaying a new page.
+* results are being updated every 200 ms, not instantly, so that the search process might take about 30 % less time
 
 # 1.1 last Python3.5- (2020-06-09)
 
@@ -10,7 +12,7 @@ New config options, Tab and Shift+Tab for moving caret
 Since I made changes in this commit, the searching become even more smooth for me. The page titles are given the priority now to be ordered in the beginning.
 
 # 1.02 History excluded (2016-08-27)
-Traversing the search results shouldnt fullfill your Zim history now ;)
+Traversing the search results should not fulfill your Zim history now ;)
 
 # 1.01 #13 (2016-08-27)
 many bug fixes, plugin is more reliable
