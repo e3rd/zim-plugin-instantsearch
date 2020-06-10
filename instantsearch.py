@@ -566,7 +566,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             string = self.state.query
             string = string.strip('*')  # support partial matches
             if self.plugin.preferences['highlight_search']:
-                self.window.pageview.show_find(string, highlight=True)
+                self.window.pageview.show_find(string.split(" ")[0], highlight=True)
 
     def _hide_preview(self):
         self.preview_pane.hide()
