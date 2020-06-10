@@ -169,6 +169,9 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
     # queryTime = 0
 
+    def title(self, title=""):
+        self.gui.set_title("Search " + title)
+
     def change(self, _):  # widget, event,text
         if self.timeout:
             GObject.source_remove(self.timeout)
@@ -244,11 +247,13 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.process_menu()  # show for now results of title search
 
         if len(query) >= self.start_search_length:
+            self.title("..")
             self.timeout = GObject.timeout_add(self.keystroke_delay,
                                                self.start_zim_search)  # ideal delay between keystrokes
 
     def start_zim_search(self):
         """ Starts search for the input. """
+        self.title("...")
         self.timeout = ""
         self.caret['altPos'] = 0  # possible position of caret - beginning
         self.query_o = Query(f'"*{self.state.query}*"' if self.plugin.preferences['is_wildcarded']
@@ -261,6 +266,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         state = self.state  # this is thread, so that self.state would can before search finishes
         self.selection.search(self.query_o, selection=last_sel, callback=self._search_callback(self.state.raw_query))
         self._update_results(self.selection, State.get(self.state.raw_query), force=True)
+        self.title()
 
         state.is_finished = True
 
