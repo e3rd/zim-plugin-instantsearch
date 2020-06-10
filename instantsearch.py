@@ -88,6 +88,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.label_preview = None
         self.preview_pane = None
         self._last_update = 0
+        # self.position = None
 
         # preferences
         self.title_match_char = self.plugin.preferences['title_match_char']
@@ -157,6 +158,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         else:
             raise AttributeError("Instant search: Wrong position preference.")
 
+        # self.position = self.gui.get_position() # works bad -> when menu is displayed first, the position changes
         self.gui.show_all()
 
         self.label_var = ""  # XX remove?
@@ -360,10 +362,27 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         if self.timeout_open_page_preview:
             GObject.source_remove(self.timeout_open_page_preview)
             self.timeout_open_page_preview = None
-        self.gui.resize(300, 100)  # reset size
+        # if self.plugin.preferences['position'] == InstantSearchPlugin.POSITION_RIGHT:
+        #     if not self.position:
+        #
+        #     w = self.gui.get_allocated_width()
+        #     if w > 500:
+        #         w = 600
+        #     elif w > 400:
+        #         w = 500
+        #     elif w > 300:
+        #         w = 400
+        #     x2 = self.position[0]+300-w  # get X-position where window should be
+        #     x, y = self.gui.get_position()
+        #     if x2 != x:  # this is not the current position
+        #         print(f"  *** Moving to {x2}, current {x},
+        #         default {self.position[0]}, width {w}, alloc {self.gui.get_allocated_width()}")
+        #         self.gui.resize(w, -1)  # reset size
+        #         self.gui.move(x2, y)
+        
         # treat possible caret deflection
-        if self.caret['pos'] < 0 or self.caret['pos'] > len(
-                self.state.items) - 1:  # place the caret to the beginning or the end of list
+        if self.caret['pos'] < 0 or self.caret['pos'] > len(self.state.items) - 1:
+            # place the caret to the beginning or the end of list
             self.caret['pos'] = self.caret['altPos']
 
         text = ""
