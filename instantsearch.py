@@ -55,13 +55,6 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
         ('ignore_subpages', 'bool', _("Ignore sub-pages (if ignored, search 'linux'"
                                       " would return page:linux but not page:linux:subpage"
                                       " (if in the subpage, there is no occurrence of string 'linux')"), True),
-        # XXXX To be decided:
-        # Protože když je pryč wildcard, běžný zim nevyhledá střed slova.
-        # Ale externí jo. Externí ovšem nevyhledá OR: "foo bar" dva středy slova.
-        # Wildcard prevents tag searching, to taky pořešit.
-        # I think there is no use of using wild cards here. XXX STRED SLOVA. ALE EXTERNAL ZIM TO ZARIDI, NE?
-        # Moreover, "foo bar" will not match pages containing words at different lines.
-        ('is_wildcarded', 'bool', _("Append wildcards to the search string: *string*"), True),
         ('is_cached', 'bool',
          _("Cache results of a search to be used in another search. (Till the end of zim process.)"), True),
         ('open_when_unique', 'bool', _('When only one page is found, open it automatically.'), True),
@@ -103,8 +96,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.start_search_length = self.plugin.preferences['start_search_length']
         self.keystroke_delay_open = self.plugin.preferences['keystroke_delay_open']
         self.keystroke_delay = self.plugin.preferences['keystroke_delay']
-        self.open_when_unique = self.plugin.preferences['open_when_unique']
 
+    # noinspection PyArgumentList,PyUnresolvedReferences
     @action(_('_Instant search'), accelerator='<ctrl>e')  # T: menu item
     def instant_search(self):
 
@@ -184,6 +177,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
     def change(self, _):  # widget, event,text
         if self.timeout:
             GObject.source_remove(self.timeout)
+            self.timeout = None
         q = self.input_entry.get_text()
         # print("Change. {} {}".format(input, self.last_query))
         if q == self.last_query:
@@ -223,12 +217,17 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
         query = self.state.query
         menu = self.state.menu
+
         # 'te' matches this page titles: 'test' or 'Journal:test' or 'foo test' or 'foo (test)'
-        is_in_query = re.compile(r"(^|:|\s|\()" + query).search
+        sub_queries = [re.compile(r"(^|:|\s|\()" + q) for q in query.split(" ")]
+
+        def in_query(txt):
+            return all(q.search(txt) for q in sub_queries)
+
         if self.is_subset and len(query) < self.start_search_length:
             # letter(s) was/were added and full search has not yet been activated
             for path in _MenuItem.titles:
-                if path in self.state.menu and not is_in_query(path.lower()):  # 'te' didnt match 'test' etc
+                if path in self.state.menu and not in_query(path.lower()):  # 'te' didnt match 'test' etc
                     del menu[path]  # we pop out the result
                 else:
                     menu[path].sure = True
@@ -236,11 +235,12 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             _MenuItem.titles = set()
             found = 0
             if self.state.first_seen:
-                for path, pathLow in self.cached_titles:  # quick search in titles
-                    if is_in_query(pathLow):  # 'te' matches 'test' or 'Journal:test' etc
+                for path, path_low in self.cached_titles:  # quick search in titles
+                    if in_query(path_low):  # 'te' matches 'test' or 'Journal:test' etc
                         _MenuItem.titles.add(path)
                         # "raz" in "raz:dva", but not in "dva"
                         if query in path.lower() and query not in path.lower().split(":")[-1]:
+                            # XX ignores the fact the query may be split
                             self.state.menu[":".join(path.split(":")[:-1])].bonus += 1  # 1 point for subpage
                             menu[path].bonus = -11
                         # 10 points for title (zim default) (so that it gets displayed before search finishes)
@@ -265,19 +265,21 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.title("...")
         self.timeout = ""
         self.caret['altPos'] = 0  # possible position of caret - beginning
-        self.query_o = Query(f'"*{self.state.query}*"' if self.plugin.preferences['is_wildcarded']
-                             else self.state.query)
-        # self.query_o = Query(self.state.query) # XXX
+        self.query_o = Query(self.state.query)
 
         # it should be quicker to find the string, if we provide this subset from last time
         # (in the case we just added a letter, so that the subset gets smaller)
-        last_sel = self.selection if self.is_subset and self.state.previous.is_finished else None
-        self.selection = SearchSelection(self.window.notebook)
-        state = self.state  # this is thread, so that self.state would can before search finishes
-        self.selection.search(self.query_o, selection=last_sel, callback=self._search_callback(self.state.raw_query))
-        self._update_results(self.selection, State.get(self.state.raw_query), force=True)
-        self.start_external_search()
-        self.title("....")
+        # last_sel = self.selection if self.is_subset and self.state.previous and self.state.previous.is_finished
+        #   else None
+        # print(f"{self.state.query} LAST SEL? {last_sel}")
+        selection = self.selection = SearchSelection(self.window.notebook)
+        state = self.state  # this is a thread, so that self.state might change before search finishes
+
+        # internal search disable - it was way too slower
+        # selection.search(self.query_o, selection=last_sel, callback=self._search_callback(state))
+        # self._update_results(selection, state, force=True)
+        # self.title("....")
+        self.start_external_search(selection, state)
 
         state.is_finished = True
 
@@ -292,7 +294,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
         self.title()
 
-    def start_external_search(self):
+    def start_external_search(self, selection, state):
         """ Zim internal search is not able to find out text with markup.
          Ex:
           'economical' is not recognized as 'economi**cal**' (however highlighting works great),
@@ -301,38 +303,77 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
          This fulltext search loops all .txt files in the notebook directory and tries to recognize the patterns.
          """
+
+        # divide query to independent words "foo economical" -> "foo", "economical", page has to contain both
         # strip markup: **bold**, //italic//,  __underline__, ''verbatim'', ~~strike through~~
-        s = r"[*/'_~]*".join((re.escape(s) for s in list(self.state.query)))
-        query = re.compile(s)  # matches query "economi**cal**"
-        link = re.compile(r"\[\[(.*?)\]\]")  # matches all links "economi[[inserted link]]cal"
+        # matches query "economi**cal**"
+
+        def letter_split(q):
+            """ Every letter is divided by a any-formatting-match-group and escaped.
+                'foo.' -> 'f[*/'_~]o[*/'_~]\\.'
+            """
+            return r"[*/'_~]*".join((re.escape(c) for c in list(q)))
+
+        sub_queries = state.query.split(" ")
+
+        # regex to identify in all sub_queries present in the text
+        queries = [re.compile(letter_split(q), re.IGNORECASE) for q in sub_queries]
+
+        # regex to identify the very query is present
+        exact_query = re.compile(letter_split(state.query), re.IGNORECASE) if len(sub_queries) > 1 else None
+
+        # regex to count the number of the sub_queries present and to optionally add information about header used
+        header_queries = [re.compile("(\n=+ .*)?" + letter_split(q), re.IGNORECASE) for q in sub_queries]
+
+        # regex to identify inner link contents
+        link = re.compile(r"\[\[(.*?)\]\]", re.IGNORECASE)  # matches all links "economi[[inserted link]]cal"
 
         for p in pathlib.Path(str(self.window.notebook.folder)).rglob("*.txt"):
+            s = p.read_text()  # strip header
+            if s.startswith('Content-Type: text/x-zim-wiki'):
+                # XX will that work on Win? I should use more general separator IMHO in the whole file rather than '\n'.
+                s = s[s.find("\n\n"):]
+
             matched_links = []
 
             def matched_link(match):
                 matched_links.append(match.group(1))
                 return ""
-            txt = p.read_text()
+
             # pull out links "economi[[inserted link]]cal" -> "economical" + "inserted link"
-            txt = link.sub(matched_link, txt)
-            if query.search(txt) or query.search("".join(matched_links)):
+            txt_body = link.sub(matched_link, s)
+            txt_links = "".join(matched_links)
+
+            if all(query.search(txt_body) or query.search(txt_links) for query in queries):
                 path = self.window.notebook.layout.map_file(File(str(p)))[0]
+
+                # score = header order * 3 + body match count * 1
+                # if there are '=' equal chars before the query, it is header. The bigger number, the bigger header.
+                # Header 5 corresponds to 3 points, Header 1 to 7 points.
+                score = sum([len(m.group(1)) * 3 if m.group(1) else 1
+                             for q in header_queries for m in q.finditer(txt_body)])
+                if exact_query:  # there are sub-queries, we favourize full-match
+                    score += 5 * len(exact_query.findall(txt_body))
+
                 # noinspection PyProtectedMember
-                self.selection._count_score(path, 1)  # +1 score for every match
-        self._update_results(self.selection, State.get(self.state.raw_query), force=True)
+                # score might be zero because we are not re-checking against txt_links matches
+                selection._count_score(path, score or 1)
+        self._update_results(selection, state, force=True)
 
     def check_last(self):
         """ opens the page if there is only one option in the menu """
-        if self.open_when_unique and len(self.state.menu) == 1:
+        if len(self.state.menu) == 1 and self.plugin.preferences['open_when_unique']:
             self._open_page(Path(list(self.state.menu)[0]), exclude_from_history=False)
             self.close()
+        elif not len(self.state.menu):
+            self._open_original()
 
-    def _search_callback(self, query):
+    def _search_callback(self, state):
         def _(results, _path):
             if results is not None:
                 # we finish the search even if another search is running.
                 # If returned False, the search would be cancelled
-                self._update_results(results, State.get(query))
+                self._update_results(results, state)
             while Gtk.events_pending():
                 Gtk.main_iteration()
             return True
@@ -354,9 +395,11 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
         changed = False
 
-        state.lastResults = results  # XXX lastResults???
+        # Xstate.lastResults = results
         for option in results.scores:
-            if state.page_title_only and state.query not in option.name:  # searching in the page name only
+            # searching in the page name only
+            if state.page_title_only and not all(s in option.name for s in state.query.split(" ")):
+                # page title does not match, skip
                 continue
 
             if option.name not in state.menu:  # new item found
@@ -484,7 +527,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
     def _open_original(self):
         self._open_page(Path(self.original_page))
-        # we already have HistoryPath objects in the self.original_history, we cannot add them in te constructor
+        # we already have HistoryPath objects in the self.original_history, we cannot add them in the constructor
+        # XX I do not know what is that good for
         hl = HistoryList([])
         hl.extend(self.original_history)
         self.window.history.uistate["list"] = hl
@@ -508,7 +552,6 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         # open page
         if page and page.name and page.name != self.last_page:
             self.last_page = page.name
-            print("OPENING", page)
             self.window.navigation.open_page(page)
             if exclude_from_history and list(self.window.history._history)[-1:][0].name != self.original_page:
                 # there is no public API, so lets use protected _history instead
@@ -558,7 +601,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             # noinspection PyProtectedMember
             self.window.pageview._hack_hbox.hide()
 
-    def _get_preview_text(self, lines, query):
+    @staticmethod
+    def _get_preview_text(lines, query):
         max_lines = 200
 
         # check if the file is a Zim markup file and if so, skip header
@@ -570,6 +614,9 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
         # grep some lines
         # searching for "a" cannot match "&a", since markup_escape_text("&") -> "&apos;"
+        if query.strip() == "":
+            # XX -> will that produce "Gtk-WARNING **: 22:39:27.554: Failed to set text"?
+            logger.info("Instant search empty query")
         bold = re.compile("([^&])(" + re.escape(query) + ")", re.IGNORECASE)
         keep_all = len(lines) < max_lines
         g = iter(lines)

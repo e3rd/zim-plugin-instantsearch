@@ -4,6 +4,8 @@
 * results are being updated every 200 ms, not instantly, so that the search process might take about 30 % less time
 * window title shows if the search has finished
 * external fulltext search
+    * internal Zim search dropped
+    * wildcard option removed
 
 # 1.1 last Python3.5- (2020-06-09)
 
