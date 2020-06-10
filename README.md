@@ -24,3 +24,7 @@ Same as for the other plugins.
 ### Demonstration on YouTube
 Wanna see how it looks in action? In this example, I just search for the string "linux f" twice.
 [![Demonstration](https://img.youtube.com/vi/nB2SfxDhEoM/0.jpg)](https://www.youtube.com/watch?v=nB2SfxDhEoM)
+
+### Notes
+
+In a way the search is more reliable than current version of the internal Zim search where the query `economical` is not recognized if the part of the text is bold: `economi**cal**` (however highlighting works great), if a link is inserted in the middle: `economi[[inserted link]]cal` or if the query is hidden in the link: `[[http://economical.example.com|link]]`.

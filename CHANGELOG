@@ -3,6 +3,7 @@
 * preview: When navigating search menu, the page is previewed first after 150 ms by default and open after 1 500 ms. When page is not very small, navigation stuck when displaying a new page.
 * results are being updated every 200 ms, not instantly, so that the search process might take about 30 % less time
 * window title shows if the search has finished
+* external fulltext search
 
 # 1.1 last Python3.5- (2020-06-09)
 

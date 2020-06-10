@@ -4,6 +4,7 @@
 # Search instantly as you type. Edvard Rejthar
 # https://github.com/e3rd/zim-plugin-instantsearch
 #
+import pathlib
 from collections import defaultdict
 from copy import deepcopy
 from time import time
@@ -12,6 +13,7 @@ from gi.repository import GObject, Gtk, Gdk
 from gi.repository.GLib import markup_escape_text
 from zim import newfs
 from zim.actions import action
+from zim.fs import File
 from zim.gui.mainwindow import MainWindowExtension
 from zim.gui.widgets import Dialog
 from zim.gui.widgets import InputEntry
@@ -248,6 +250,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.process_menu()  # show for now results of title search
 
         if len(query) >= self.start_search_length:
+            # self.start_external_search() # XXX
+            # return
             self.title("..")
             self.timeout = GObject.timeout_add(self.keystroke_delay,
                                                self.start_zim_search)  # ideal delay between keystrokes
@@ -267,7 +271,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         state = self.state  # this is thread, so that self.state would can before search finishes
         self.selection.search(self.query_o, selection=last_sel, callback=self._search_callback(self.state.raw_query))
         self._update_results(self.selection, State.get(self.state.raw_query), force=True)
-        self.title()
+        self.start_external_search()
+        self.title("....")
 
         state.is_finished = True
 
@@ -280,14 +285,45 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
         self.process_menu(state=state)
 
+        self.title()
+
+    def start_external_search(self):
+        """ Zim internal search is not able to find out text with markup.
+         Ex:
+          'economical' is not recognized as 'economi**cal**' (however highlighting works great),
+                                         as 'economi[[inserted link]]cal'
+                                         as 'any text with [[http://economical.example.com|link]]'
+
+         This fulltext search loops all .txt files in the notebook directory and tries to recognize the patterns.
+         """
+        # strip markup: **bold**, //italic//,  __underline__, ''verbatim'', ~~strike through~~
+        s = r"[*/'_~]*".join(list(self.state.query))
+        query = re.compile(s)  # matches query "economi**cal**"
+        link = re.compile(r"\[\[(.*?)\]\]")  # matches all links "economi[[inserted link]]cal"
+
+        for p in pathlib.Path(str(self.window.notebook.folder)).rglob("*.txt"):
+            matched_links = []
+
+            def matched_link(match):
+                matched_links.append(match.group(1))
+                return ""
+            txt = p.read_text()
+            # pull out links "economi[[inserted link]]cal" -> "economical" + "inserted link"
+            txt = link.sub(matched_link, txt)
+            if query.search(txt) or query.search("".join(matched_links)):
+                path = self.window.notebook.layout.map_file(File(str(p)))[0]
+                # noinspection PyProtectedMember
+                self.selection._count_score(path, 1)  # +1 score for every match
+        self._update_results(self.selection, State.get(self.state.raw_query), force=True)
+
     def check_last(self):
         """ opens the page if there is only one option in the menu """
         if self.open_when_unique and len(self.state.menu) == 1:
-            self._open_page(Path(self.state.menu.keys()[0]), exclude_from_history=False)
+            self._open_page(Path(list(self.state.menu)[0]), exclude_from_history=False)
             self.close()
 
     def _search_callback(self, query):
-        def _search_callback(results, _path):
+        def _(results, _path):
             if results is not None:
                 # we finish the search even if another search is running.
                 # If returned False, the search would be cancelled
@@ -296,23 +332,24 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
                 Gtk.main_iteration()
             return True
 
-        return _search_callback
+        return _
 
     def _update_results(self, results, state, force=False):
         """
-        This method may run many times, due to the _update_results, which are updated many times.
-        I may set that _update_results would run only once, but this is nice - the results are appearing one by one.
+        This method may run many times, due to the _update_results, which are updated many times,
+         the results are appearing one by one. However, if called earlier than 0.2 s, ignored.
+
+        Measures:
+            If every callback would be counted, it takes 3500 ms to build a result set.
+            If callbacks earlier than 0.6 s -> 2300 ms, 0.3 -> 2600 ms, 0.1 -> 2800 ms.
         """
-        if not force and time() < self._last_update + 0.2:
-            # if update callback called earlier than before 200 ms, ignore
-            # If every callback is counted, it takes 3500 ms to build a result set.
-            # If 0.6 -> 2300 ms, 0.3 -> 2600 ms, 0.1 -> 2800 ms
+        if not force and time() < self._last_update + 0.2:  # if update callback called earlier than 200 ms, ignore
             return
         self._last_update = time()
 
         changed = False
 
-        state.lastResults = results
+        state.lastResults = results  # XXX lastResults???
         for option in results.scores:
             if state.page_title_only and state.query not in option.name:  # searching in the page name only
                 continue
@@ -379,7 +416,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         #         default {self.position[0]}, width {w}, alloc {self.gui.get_allocated_width()}")
         #         self.gui.resize(w, -1)  # reset size
         #         self.gui.move(x2, y)
-        
+
         # treat possible caret deflection
         if self.caret['pos'] < 0 or self.caret['pos'] > len(self.state.items) - 1:
             # place the caret to the beginning or the end of list
