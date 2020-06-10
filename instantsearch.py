@@ -55,6 +55,12 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
         ('ignore_subpages', 'bool', _("Ignore sub-pages (if ignored, search 'linux'"
                                       " would return page:linux but not page:linux:subpage"
                                       " (if in the subpage, there is no occurrence of string 'linux')"), True),
+        # XXXX To be decided:
+        # Protože když je pryč wildcard, běžný zim nevyhledá střed slova.
+        # Ale externí jo. Externí ovšem nevyhledá OR: "foo bar" dva středy slova.
+        # Wildcard prevents tag searching, to taky pořešit.
+        # I think there is no use of using wild cards here. XXX STRED SLOVA. ALE EXTERNAL ZIM TO ZARIDI, NE?
+        # Moreover, "foo bar" will not match pages containing words at different lines.
         ('is_wildcarded', 'bool', _("Append wildcards to the search string: *string*"), True),
         ('is_cached', 'bool',
          _("Cache results of a search to be used in another search. (Till the end of zim process.)"), True),
@@ -250,8 +256,6 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.process_menu()  # show for now results of title search
 
         if len(query) >= self.start_search_length:
-            # self.start_external_search() # XXX
-            # return
             self.title("..")
             self.timeout = GObject.timeout_add(self.keystroke_delay,
                                                self.start_zim_search)  # ideal delay between keystrokes
@@ -263,6 +267,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.caret['altPos'] = 0  # possible position of caret - beginning
         self.query_o = Query(f'"*{self.state.query}*"' if self.plugin.preferences['is_wildcarded']
                              else self.state.query)
+        # self.query_o = Query(self.state.query) # XXX
 
         # it should be quicker to find the string, if we provide this subset from last time
         # (in the case we just added a letter, so that the subset gets smaller)
@@ -297,7 +302,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
          This fulltext search loops all .txt files in the notebook directory and tries to recognize the patterns.
          """
         # strip markup: **bold**, //italic//,  __underline__, ''verbatim'', ~~strike through~~
-        s = r"[*/'_~]*".join(list(self.state.query))
+        s = r"[*/'_~]*".join((re.escape(s) for s in list(self.state.query)))
         query = re.compile(s)  # matches query "economi**cal**"
         link = re.compile(r"\[\[(.*?)\]\]")  # matches all links "economi[[inserted link]]cal"
 
@@ -564,7 +569,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
                     break
 
         # grep some lines
-        bold = re.compile("(" + query + ")", re.IGNORECASE)
+        # searching for "a" cannot match "&a", since markup_escape_text("&") -> "&apos;"
+        bold = re.compile("([^&])(" + re.escape(query) + ")", re.IGNORECASE)
         keep_all = len(lines) < max_lines
         g = iter(lines)
         chosen = [next(g)]  # always include header as the first line, even if it does not contain the query
@@ -572,7 +578,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             if len(chosen) > max_lines:  # file is too long which would result the preview to not be smooth
                 break
             elif keep_all or query in line.lower():
-                chosen.append(bold.sub(r"<b>\g<1></b>", line))
+                chosen.append(bold.sub(r"\g<1><b>\g<2></b>", line))
         if not keep_all or len(chosen) > max_lines:
             # note that query might not been found, ex: query "foo" would not find line with a bold 'o': "f**o**o"
             chosen.append("...")
