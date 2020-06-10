@@ -10,6 +10,7 @@ from time import time
 import sys
 
 from gi.repository import GObject, Gtk, Gdk
+from gi.repository.GLib import markup_escape_text
 from zim import newfs
 from zim.actions import action
 from zim.gui.mainwindow import MainWindowExtension
@@ -477,7 +478,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         if page and page.name and page.name != self.last_page_preview and not self.is_closed:
             # show preview pane and hide current text editor
             self.last_page_preview = page.name
-            self.label_preview.set_text(self._get_preview_text(page, self.state.query))
+            self.label_preview.set_markup(self._get_preview_text(page, self.state.query))
 
             # shows GUI (hidden in self._hide_preview()
             self.preview_pane.show_all()
@@ -487,34 +488,31 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
     def _get_preview_text(self, page, query):
         max_lines = 100
         try:
-            lines = self.window.notebook.layout.map_page(page)[0].readlines()
+            lines = markup_escape_text(self.window.notebook.layout.map_page(page)[0].read()).splitlines()
         except newfs.base.FileNotFoundError:
             lines = [f"page {page} has no content"]  # page has not been created yet
 
         # check if the file is a Zim markup file and if so, skip header
-        if lines[0] == 'Content-Type: text/x-zim-wiki\n':
+        if lines[0] == 'Content-Type: text/x-zim-wiki':
             for i, line in enumerate(lines):
-                if line == "\n":
+                if line == "":
                     lines = lines[i + 1:]
                     break
 
-        if len(lines) > max_lines:  # file is too long which would result the preview to not be smooth
-            # grep some lines
-            g = iter(lines)
-            chosen = [next(g)]  # always include header as the first line, even if it does not contain the query
-            for line in g:
-                if query in line.lower():
-                    chosen.append(line)
-            if len(chosen) > 1:  # something has been found
-                # query has been found (it might not, ex: query "foo" would not find line with a bold 'o': "f**o**o"
-                chosen.append("...")
-                lines = chosen
-
-        if len(lines) > max_lines:
-            lines = lines[:max_lines]
-            lines.append("...")
-
-        return "".join(line for line in lines)
+        # grep some lines
+        bold = re.compile("("+query+")", re.IGNORECASE)
+        keep_all = len(lines) < max_lines
+        g = iter(lines)
+        chosen = [next(g)]  # always include header as the first line, even if it does not contain the query
+        for line in g:
+            if len(chosen) > max_lines:  # file is too long which would result the preview to not be smooth
+                break
+            elif keep_all or query in line.lower():
+                chosen.append(bold.sub(r"<b>\g<1></b>", line))
+        if not keep_all or len(chosen) > max_lines:
+            # note that query might not been found, ex: query "foo" would not find line with a bold 'o': "f**o**o"
+            chosen.append("...")
+        return "\n".join(line for line in chosen)
 
 
 class State:
