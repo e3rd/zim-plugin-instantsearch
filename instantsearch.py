@@ -162,7 +162,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
         self.gui.show_all()
 
-    def geometry(self, init=False, repeat=True):
+    def geometry(self, init=False, repeat=True, force=False):
         px, py = self.window.get_position()
         pw, ph = self.window.get_size()
         if init:
@@ -179,7 +179,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         else:
             raise AttributeError("Instant search: Wrong position preference.")
 
-        if init or x != x2:
+        if init or x != x2 or force:
             self.gui.resize(300, 100)
             self.gui.move(x2, y2)
 
@@ -513,6 +513,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             else:
                 text += f'{s} ({score}) {"" if self.state.menu[item].sure else "?"}\n'
             i += 1
+        if not text and self.state.is_finished:
+            text = "No result"
 
         self.label_object.set_markup(text)
         self.menu_page = Path(self.caret.text if len(self.state.items) else self.original_page)
@@ -526,7 +528,9 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
                                                                      self.menu_page)  # ideal delay between keystrokes
         else:
             self._open_page(self.menu_page)
-        self.geometry()
+        # we force here geometry to redraw because often we end up with "No result" page that is very tall
+        # because of a many records just hidden
+        self.geometry(force=True)
 
     def move(self, widget, event):
         """ Move caret up and down. Enter to confirm, Esc closes search."""
@@ -537,7 +541,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         if key_name in moves:
             self.sout_menu(display_immediately=False, caret_move=moves[key_name])
         elif key_name in ("Home", "End"):
-            if event.state & Gdk.ModifierType.CONTROL_MASK:  # Ctrl+Home jumps to the query input text start
+            if event.state & Gdk.ModifierType.CONTROL_MASK or event.state & Gdk.ModifierType.SHIFT_MASK:
+                # Ctrl/Shift+Home jumps to the query input text start
                 return
             if key_name == "Home":  # Home jumps at the result list start
                 self.sout_menu(display_immediately=False, caret_move=0)
