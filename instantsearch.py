@@ -8,6 +8,7 @@ import pathlib
 from collections import defaultdict
 from copy import deepcopy
 from time import time
+from types import SimpleNamespace
 from typing import Dict, List
 
 from gi.repository import GObject, Gtk, Gdk
@@ -114,7 +115,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.cached_titles = []
         self.last_query = ""  # previous user input
         self.query_o = None
-        self.caret = {'pos': 0, 'altPos': 0, 'text': ""}  # cursor position
+        self.caret = SimpleNamespace(pos=0, alt_pos=0, text="", stick=False)  # cursor position
         self.original_page = self.window.page.name  # we return here after escape
         self.original_history = list(self.window.history.uistate["list"])
         self.selection = None
@@ -291,7 +292,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         if self.timeout:
             GObject.source_remove(self.timeout)
             self.timeout = None
-        self.caret['altPos'] = 0  # possible position of caret - beginning
+        self.caret.alt_pos = 0  # possible position of caret - beginning
         self.query_o = Query(self.state.query)
 
         # it should be quicker to find the string, if we provide this subset from last time
@@ -430,16 +431,10 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         changed = False
 
         for option in results.scores:
-            # XXX I think we never come here now
-            # searching in the page name only
-            # if state.page_title_only and not all(s in option.name for s in state.query.split(" ")):
-            #     # page title does not match, skip
-            #     continue
-
             if option.name not in state.menu:  # new item found
-                if state == self.state and option.name == self.caret['text']:  # this is current search
+                if state == self.state and option.name == self.caret.text:  # this is current search
                     # caret was on this positions; if selection narrows we know where to re-place the caret back                    
-                    self.caret['altPos'] = len(state.menu) - 1
+                    self.caret.alt_pos = len(state.menu) - 1
             if option.name not in state.menu or (
                     state.menu[option.name].bonus < 0 and state.menu[option.name].score == 0):
                 changed = True
@@ -474,7 +469,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         if state == self.state:
             self.sout_menu()
 
-    def sout_menu(self, display_immediately=False):
+    def sout_menu(self, display_immediately=False, caret_move=None):
         """ Displays menu and handles caret position. """
         if self.timeout_open_page:
             GObject.source_remove(self.timeout_open_page)
@@ -483,10 +478,20 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             GObject.source_remove(self.timeout_open_page_preview)
             self.timeout_open_page_preview = None
 
-        # treat possible caret deflection
-        if self.caret['pos'] < 0 or self.caret['pos'] > len(self.state.items) - 1:
+        # caret:
+        #   by default stays at position 0
+        #   If moved to a page, it keeps the page.
+        #   If moved back to position 0, stays there.
+        if caret_move:
+            self.caret.pos += caret_move
+            self.caret.stick = self.caret.pos != 0
+        elif self.state.items and self.caret.stick:
+            # identify current caret position, depending on the text
+            self.caret.pos = next((i for i, item in enumerate(self.state.items) if item == self.caret.text), 0)
+        if self.caret.pos < 0 or self.caret.pos > len(self.state.items) - 1:
+            # treat possible caret deflection
             # place the caret to the beginning or the end of list
-            self.caret['pos'] = self.caret['altPos']
+            self.caret.pos = self.caret.alt_pos
 
         text = ""
         i = 0
@@ -496,15 +501,15 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             pieces = item.split(":")
             pieces[-1] = f"<b>{pieces[-1]}</b>"
             s = ":".join(pieces)
-            if i == self.caret['pos']:
-                self.caret['text'] = item  # caret is at this position
+            if i == self.caret.pos:
+                self.caret.text = item  # caret is at this position
                 text += f'→ {s} ({score}) {"" if self.state.menu[item].sure else "?"}\n'
             else:
                 text += f'{s} ({score}) {"" if self.state.menu[item].sure else "?"}\n'
             i += 1
 
         self.label_object.set_markup(text)
-        self.menu_page = Path(self.caret['text'] if len(self.state.items) else self.original_page)
+        self.menu_page = Path(self.caret.text if len(self.state.items) else self.original_page)
 
         if not display_immediately:
             if self.plugin.preferences['preview_mode'] != InstantSearchPlugin.PREVIEW_ONLY:
@@ -521,12 +526,10 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         """ Move caret up and down. Enter to confirm, Esc closes search."""
         key_name = Gdk.keyval_name(event.keyval)
         if key_name == "Up" or key_name == "ISO_Left_Tab":
-            self.caret['pos'] -= 1
-            self.sout_menu(display_immediately=False)
+            self.sout_menu(display_immediately=False, caret_move=-1)
 
         if key_name == "Down" or key_name == "Tab":
-            self.caret['pos'] += 1
-            self.sout_menu(display_immediately=False)
+            self.sout_menu(display_immediately=False, caret_move=1)
 
         if key_name == "KP_Enter" or key_name == "Return":
             self._open_page(self.menu_page, exclude_from_history=False)
