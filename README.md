@@ -1,7 +1,7 @@
 # Instant Search Plugin for Zim Wiki
 Search as you type in Zim, in similar manner to OneNote Ctrl+E.
 
-When you hit Ctrl+E, small window opens, you can type in. As you type third letter, every page that matches your search is listed. You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to cancel.
+When you hit Ctrl+E, small window opens, you can type in. As you type third letter, every page that matches your search is listed. You can walk through by <kbd>Up</kbd>/<kbd>Down</kbd> arrows or <kbd>Home</kbd>/<kbd>End</kbd>/<kbd>Page Up</kbd>/<kbd>Page Down</kbd> keys, hit <kbd>Enter</kbd> to stay on the page, or <kbd>Esc</kbd> to cancel.
 Much quicker than current Zim search.
 
 ### Working with & Feedback

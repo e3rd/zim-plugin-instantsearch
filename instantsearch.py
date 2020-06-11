@@ -115,7 +115,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.cached_titles = []
         self.last_query = ""  # previous user input
         self.query_o = None
-        self.caret = SimpleNamespace(pos=0, alt_pos=0, text="", stick=False)  # cursor position
+        self.caret = SimpleNamespace(pos=0, text="", stick=False)  # cursor position
         self.original_page = self.window.page.name  # we return here after escape
         self.original_history = list(self.window.history.uistate["list"])
         self.selection = None
@@ -162,7 +162,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
         self.gui.show_all()
 
-    def geometry(self, init=False):
+    def geometry(self, init=False, repeat=True):
         px, py = self.window.get_position()
         pw, ph = self.window.get_size()
         if init:
@@ -182,7 +182,10 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         if init or x != x2:
             self.gui.resize(300, 100)
             self.gui.move(x2, y2)
-        # print(x,y,w,h,x2, y2)
+
+        if repeat:
+            # I do not know how to catch callback when result list's width is final, so we align several times
+            [GObject.timeout_add(x, lambda: self.geometry(repeat=False)) for x in (100, 200, 500)]
 
     def title(self, title=""):
         self.gui.set_title("Search " + title)
@@ -292,7 +295,6 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         if self.timeout:
             GObject.source_remove(self.timeout)
             self.timeout = None
-        self.caret.alt_pos = 0  # possible position of caret - beginning
         self.query_o = Query(self.state.query)
 
         # it should be quicker to find the string, if we provide this subset from last time
@@ -431,10 +433,6 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         changed = False
 
         for option in results.scores:
-            if option.name not in state.menu:  # new item found
-                if state == self.state and option.name == self.caret.text:  # this is current search
-                    # caret was on this positions; if selection narrows we know where to re-place the caret back                    
-                    self.caret.alt_pos = len(state.menu) - 1
             if option.name not in state.menu or (
                     state.menu[option.name].bonus < 0 and state.menu[option.name].score == 0):
                 changed = True
@@ -482,16 +480,21 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         #   by default stays at position 0
         #   If moved to a page, it keeps the page.
         #   If moved back to position 0, stays there.
-        if caret_move:
-            self.caret.pos += caret_move
+        if caret_move is not None:
+            if caret_move == 0:
+                self.caret.pos = 0
+            else:
+                self.caret.pos += caret_move
             self.caret.stick = self.caret.pos != 0
         elif self.state.items and self.caret.stick:
             # identify current caret position, depending on the text
             self.caret.pos = next((i for i, item in enumerate(self.state.items) if item == self.caret.text), 0)
-        if self.caret.pos < 0 or self.caret.pos > len(self.state.items) - 1:
-            # treat possible caret deflection
+        # treat possible caret deflection
+        if self.caret.pos < 0:
             # place the caret to the beginning or the end of list
-            self.caret.pos = self.caret.alt_pos
+            self.caret.pos = 0
+        elif self.caret.pos >= len(self.state.items):
+            self.caret.pos = 0 if caret_move == 1 else len(self.state.items) - 1
 
         text = ""
         i = 0
@@ -522,20 +525,29 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             self._open_page(self.menu_page)
         self.geometry()
 
-    def move(self, _widget, event):
+    def move(self, widget, event):
         """ Move caret up and down. Enter to confirm, Esc closes search."""
         key_name = Gdk.keyval_name(event.keyval)
-        if key_name == "Up" or key_name == "ISO_Left_Tab":
-            self.sout_menu(display_immediately=False, caret_move=-1)
 
-        if key_name == "Down" or key_name == "Tab":
-            self.sout_menu(display_immediately=False, caret_move=1)
+        # handle basic caret movement
+        moves = {"Up": -1, "ISO_Left_Tab": -1, "Down": 1, "Tab": 1, "Page_Up": -10, "Page_Down": 10}
+        if key_name in moves:
+            self.sout_menu(display_immediately=False, caret_move=moves[key_name])
+        elif key_name in ("Home", "End"):
+            if event.state & Gdk.ModifierType.CONTROL_MASK:  # Ctrl+Home jumps to the query input text start
+                return
+            if key_name == "Home":  # Home jumps at the result list start
+                self.sout_menu(display_immediately=False, caret_move=0)
+                widget.emit_stop_by_name("key-press-event")
+            else:
+                self.sout_menu(display_immediately=False, caret_move=float("inf"))
+                widget.emit_stop_by_name("key-press-event")
 
-        if key_name == "KP_Enter" or key_name == "Return":
+        # confirm or cancel
+        elif key_name == "KP_Enter" or key_name == "Return":
             self._open_page(self.menu_page, exclude_from_history=False)
             self.close()
-
-        if key_name == "Escape":
+        elif key_name == "Escape":
             self._open_original()
             self.is_closed = True  # few more timeouts are on the way probably
             # no self.close() call needed, GTK emits this itself on Escape

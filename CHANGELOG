@@ -9,6 +9,7 @@
 * geometry fix, stays on position when results are longer than the dialog width
 * page base name is in bold in results
 * good caret behaviour
+* good keyboard navigation
 
 # 1.1 last Python3.5- (2020-06-09)
 
