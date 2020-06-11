@@ -43,14 +43,25 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
     POSITION_CENTER = _('center')  # T: option value
     POSITION_RIGHT = _('right')  # T: option value
 
+    PREVIEW_ONLY = "preview_only"
+    PREVIEW_THEN_FULL = "preview_then_full"
+    FULL_ONLY = "full_only"
+
+    PREVIEW_MODE = (
+        (PREVIEW_THEN_FULL, _('Preview then full view')),
+        (PREVIEW_ONLY, _('Preview only')),
+        (FULL_ONLY, _('Full view only')),
+    )
+
     plugin_preferences = (
         # T: label for plugin preferences dialog
         ('title_match_char', 'string', _('Match title only if query starting by this char'), "!"),
         ('start_search_length', 'int', _('Start the search when number of letters written'), 3, (0, 10)),
-        ('keystroke_delay', 'int', _('Keystroke delay for displaying preview'), 150, (0, 5000)),
-        ('keystroke_delay_open', 'int', _('Keystroke delay for opening page'
+        ('keystroke_delay', 'int', _('Keystroke delay before search'), 150, (0, 5000)),
+        ('keystroke_delay_open', 'int', _('Keystroke delay for opening page in full view'
                                           '\n(Low value might prevent search list smooth navigation'
                                           ' if page is big.)'), 1500, (0, 5000)),
+        ('preview_mode', 'choice', _('Preview mode'), PREVIEW_THEN_FULL, PREVIEW_MODE),
         ('highlight_search', 'bool', _('Highlight search'), True),
         ('ignore_subpages', 'bool', _("Ignore sub-pages (if ignored, search 'linux'"
                                       " would return page:linux but not page:linux:subpage"
@@ -68,7 +79,6 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
     def __init__(self, plugin, window):
         super().__init__(plugin, window)
-        self.label_var = None
         self.timeout = None
         self.timeout_open_page = None  # will open page after keystroke delay
         self.timeout_open_page_preview = None  # will open page after keystroke delay
@@ -138,11 +148,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.label_object.set_size_request(300, -1)
         self.gui.vbox.pack_start(self.label_object, expand=False, fill=True, padding=0)
 
-        # gui geometry
-        px, py = self.window.get_position()
-        pw, ph = self.window.get_size()
-        # Xx, y = self.gui.get_position()
-
+        # preview pane
         self.label_preview = Gtk.Label(label='...loading...')
         # not sure if this has effect, longer lines without spaces still make window inflate
         self.label_preview.set_line_wrap(True)
@@ -151,25 +157,33 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.preview_pane.pack_start(self.label_preview, False, False, 5)
         self.window.pageview.pack_start(self.preview_pane, False, False, 5)
 
+        # gui geometry
+        self.geometry(True)
+
+        self.gui.show_all()
+
+    def geometry(self, init=False):
+        px, py = self.window.get_position()
+        pw, ph = self.window.get_size()
+        if init:
+            x, y = None, None
+            w, h = 300, 100
+        else:
+            x, y = self.gui.get_position()
+            w, h = self.gui.get_allocated_width(), self.gui.get_allocated_height()
         if self.plugin.preferences['position'] == InstantSearchPlugin.POSITION_RIGHT:
-            self.gui.move((pw - 300), 0)
+            x2, y2 = pw - w, 0
         elif self.plugin.preferences['position'] == InstantSearchPlugin.POSITION_CENTER:
-            self.gui.resize(300, 100)
-            self.gui.move(px + (pw / 2) - 150, py + (ph / 2) - 250)
+            x2, y2 = px + (pw / 2) - w/2, py + (ph / 2) - 250
+
         else:
             raise AttributeError("Instant search: Wrong position preference.")
 
-        # self.position = self.gui.get_position() # works bad -> when menu is displayed first, the position changes
-        self.gui.show_all()
+        if init or x != x2:
+            self.gui.resize(300, 100)
+            self.gui.move(x2, y2)
 
-        self.label_var = ""  # XX remove?
-        self.timeout = ""  # XX remove?
-
-    # last_page = ""
-    # page_title_only = False
-    menu = []
-
-    # queryTime = 0
+    menu = []  # XXX delete?
 
     def title(self, title=""):
         self.gui.set_title("Search " + title)
@@ -218,6 +232,9 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         query = self.state.query
         menu = self.state.menu
 
+        if not query:
+            return self.process_menu()  # show for now results of title search
+
         # 'te' matches this page titles: 'test' or 'Journal:test' or 'foo test' or 'foo (test)'
         sub_queries = [re.compile(r"(^|:|\s|\()" + q) for q in query.split(" ")]
 
@@ -263,7 +280,9 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
     def start_zim_search(self):
         """ Starts search for the input. """
         self.title("...")
-        self.timeout = ""
+        if self.timeout:
+            GObject.source_remove(self.timeout)
+            self.timeout = None
         self.caret['altPos'] = 0  # possible position of caret - beginning
         self.query_o = Query(self.state.query)
 
@@ -291,8 +310,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             self.check_last()
 
         self.process_menu(state=state)
-
         self.title()
+        self.geometry()
 
     def start_external_search(self, selection, state):
         """ Zim internal search is not able to find out text with markup.
@@ -353,7 +372,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
                 score = sum([len(m.group(1)) * 3 if m.group(1) else 1
                              for q in header_queries for m in q.finditer(txt_body)])
                 if exact_query:  # there are sub-queries, we favourize full-match
-                    score += 5 * len(exact_query.findall(txt_body))
+                    score += 50 * len(exact_query.findall(txt_body))
 
                 # noinspection PyProtectedMember
                 # score might be zero because we are not re-checking against txt_links matches
@@ -475,21 +494,26 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         for item in self.state.items:
             score = self.state.menu[item].score + self.state.menu[item].bonus
             self.state.menu[item].last_order = i
+            pieces = item.split(":")
+            pieces[-1] = f"<b>{pieces[-1]}</b>"
+            s = ":".join(pieces)
             if i == self.caret['pos']:
                 self.caret['text'] = item  # caret is at this position
-                text += f'→ {item} ({score}) {"" if self.state.menu[item].sure else "?"}\n'
+                text += f'→ {s} ({score}) {"" if self.state.menu[item].sure else "?"}\n'
             else:
-                text += f'{item} ({score}) {"" if self.state.menu[item].sure else "?"}\n'
+                text += f'{s} ({score}) {"" if self.state.menu[item].sure else "?"}\n'
             i += 1
 
-        self.label_object.set_text(text)
+        self.label_object.set_markup(text)
         self.menu_page = Path(self.caret['text'] if len(self.state.items) else self.original_page)
 
         if not display_immediately:
-            self.timeout_open_page = GObject.timeout_add(self.keystroke_delay_open, self._open_page,
-                                                         self.menu_page)  # ideal delay between keystrokes
-            self.timeout_open_page_preview = GObject.timeout_add(self.keystroke_delay, self._open_page_preview,
-                                                                 self.menu_page)  # ideal delay between keystrokes
+            if self.plugin.preferences['preview_mode'] != InstantSearchPlugin.PREVIEW_ONLY:
+                self.timeout_open_page = GObject.timeout_add(self.keystroke_delay_open, self._open_page,
+                                                             self.menu_page)  # ideal delay between keystrokes
+            if self.plugin.preferences['preview_mode'] != InstantSearchPlugin.FULL_ONLY:
+                self.timeout_open_page_preview = GObject.timeout_add(self.keystroke_delay, self._open_page_preview,
+                                                                     self.menu_page)  # ideal delay between keystrokes
         else:
             self._open_page(self.menu_page)
 
@@ -566,6 +590,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             string = self.state.query
             string = string.strip('*')  # support partial matches
             if self.plugin.preferences['highlight_search']:
+                # unfortunately, we can highlight single word only
                 self.window.pageview.show_find(string.split(" ")[0], highlight=True)
 
     def _hide_preview(self):
@@ -584,7 +609,9 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             GObject.source_remove(self.timeout_open_page_preview)
             self.timeout_open_page_preview = None
 
-        if page and page.name and page.name != self.last_page_preview and not self.is_closed:
+        # it does not pose a problem if we re-load preview on the same page;
+        # the query text might got another letter to highlight
+        if page and not self.is_closed:
             # show preview pane and hide current text editor
             self.last_page_preview = page.name
             try:
@@ -592,7 +619,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             except newfs.base.FileNotFoundError:
                 lines = [f"page {page} has no content"]  # page has not been created yet
 
-            if len(lines) < 50:  # the file length is very small, do not use preview here
+            # the file length is very small, prefer to not use preview here
+            if self.plugin.preferences['preview_mode'] != InstantSearchPlugin.PREVIEW_ONLY and len(lines) < 50:
                 return self._open_page(page, exclude_from_history=True)
             self.label_preview.set_markup(self._get_preview_text(lines, self.state.query))
 
@@ -612,24 +640,36 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
                     lines = lines[i + 1:]
                     break
 
+        if query.strip() == "":
+            return "\n".join(line for line in lines)
+
         # grep some lines
         # searching for "a" cannot match "&a", since markup_escape_text("&") -> "&apos;"
-        if query.strip() == "":
-            # XX -> will that produce "Gtk-WARNING **: 22:39:27.554: Failed to set text"?
-            logger.info("Instant search empty query")
-        bold = re.compile("([^&])(" + re.escape(query) + ")", re.IGNORECASE)
+        query_match = (re.compile("(" + re.escape(q) + ")", re.IGNORECASE) for q in query.split(" "))
         keep_all = len(lines) < max_lines
         g = iter(lines)
         chosen = [next(g)]  # always include header as the first line, even if it does not contain the query
         for line in g:
             if len(chosen) > max_lines:  # file is too long which would result the preview to not be smooth
                 break
-            elif keep_all or query in line.lower():
-                chosen.append(bold.sub(r"\g<1><b>\g<2></b>", line))
+            elif keep_all or any(q in line.lower() for q in query.split(" ")):
+                # keep this line since it contains a query chunk
+                chosen.append(line)
         if not keep_all or len(chosen) > max_lines:
             # note that query might not been found, ex: query "foo" would not find line with a bold 'o': "f**o**o"
             chosen.append("...")
-        return "\n".join(line for line in chosen)
+        txt = "\n".join(line for line in chosen)
+
+        # bold query chunks in the text
+        for q in query_match:
+            txt = q.sub(r"<b>\g<1></b>", txt)
+
+        # preserve markup_escape_text entities
+        # correct ex: '&a<b>m</b>p;' -> '&amp;' if searching for 'm'
+        bold_tag = re.compile("</?b>")
+        broken_entity = re.compile("&[a-z]*<b[^;]*;")
+        broken_entity.sub(lambda m: bold_tag.sub("", m.group(0)), txt)
+        return txt
 
 
 class State:
@@ -650,7 +690,8 @@ class State:
         """
         query = query.lower()
         if query not in State._states:
-            State._states[query] = State(query=query, previous=State._current)
+            previous = State._current if State._current and query.startswith(State._current.query) else None
+            State._states[query] = State(query=query, previous=previous)
             State._states[query].first_seen = True
         else:
             State._states[query].first_seen = False
