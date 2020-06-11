@@ -235,24 +235,25 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         def in_query(txt):
             """ False if any part of the query does not match.
                 If the query is longer >3 characters:
-                    * +3 for every query part that matches a title part beginning
+                    * +10 for every query part that matches a title part beginning
                         Ex: query 'te' -> +3 for these page titles:
                             'test' or 'Journal:test' or 'foo test' or 'foo (test)'
                     * +1 for every query part
                         Ex: query 'st' -> +1 for those page titles
 
                 If the query is shorter <=3 characters:
-                    +1 for every query part that matches a title part beginning
-                    False otherwise. (You would end up messed with page titles, writing a single letter.)
+                    +10 for every query part that matches a title part beginning 'te' for 'test'
+                    False otherwise ('st' for 'test') so that you do not end up messed
+                     with page titles, after writing a single letter.
             """
             arr = (q.search(txt) for q in sub_queries)
             try:
                 if len(query) <= 3:
                     # raises if subquery m does not match or is not at a page chunk beginning
-                    return sum(1 if m.group(1) else None for m in arr)
+                    return sum(10 if m.group(1) is not None else None for m in arr)
                 else:
                     # raises if subquery m does not match
-                    return sum(3 if m.group(1) else 1 for m in arr)
+                    return sum(10 if m.group(1) is not None else 1 for m in arr)
             except (AttributeError, TypeError):  # one of the sub_queries is not part of the page title
                 return False
 
@@ -276,8 +277,10 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
                     # menu[path].bonus = -11
                 else:
                     # 10 points for title (zim default) (so that it gets displayed before search finishes)
-                    menu[path].score += score
-                    menu[path].in_title = True
+                    menu[path].bonus += score  # will be added to score (score will be reset)
+                    # if score > 9, it means this might be priority match, not fulltext header search
+                    # ex "te" for "test" is priority, whereas "st" is just fulltext
+                    menu[path].in_title = True if score > 9 else False
                     menu[path].path = path
 
         if self.state.page_title_only:
@@ -436,7 +439,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             if option.name not in state.menu or (
                     state.menu[option.name].bonus < 0 and state.menu[option.name].score == 0):
                 changed = True
-            o = state.menu[option.name]
+            o: _MenuItem = state.menu[option.name]
             if not o.sure:
                 o.sure = True
                 changed = True
@@ -732,6 +735,7 @@ class State:
             for item in self.menu.values():
                 item.sure = False
                 item.bonus = item.score = 0
+                item.in_title = False
         else:
             self.menu = defaultdict(_MenuItem)
 
