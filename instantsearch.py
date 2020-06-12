@@ -64,6 +64,8 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
                                           '\n(Low value might prevent search list smooth navigation'
                                           ' if page is big.)'), 1500, (0, 5000)),
         ('preview_mode', 'choice', _('Preview mode'), PREVIEW_THEN_FULL, PREVIEW_MODE),
+        ('preview_short', 'bool', _('Preview only matching lines'
+                                    '\nOtherwise whole page is displayed if not too long.)'), False),
         ('highlight_search', 'bool', _('Highlight search'), True),
         ('ignore_subpages', 'bool', _("Ignore sub-pages (if ignored, search 'linux'"
                                       " would return page:linux but not page:linux:subpage"
@@ -72,8 +74,9 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
          _("Cache results of a search to be used in another search. (Till the end of zim process.)"), True),
         ('open_when_unique', 'bool', _('When only one page is found, open it automatically.'), True),
         ('position', 'choice', _('Popup position'), POSITION_RIGHT, (POSITION_RIGHT, POSITION_CENTER))
-        # T: plugin preference
     )
+
+    file_cache: Dict[pathlib.Path, str] = {}
 
 
 class InstantSearchMainWindowExtension(MainWindowExtension):
@@ -368,10 +371,15 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         state.matching_files = []
 
         for p in it:
-            s = p.read_text()  # strip header
-            if s.startswith('Content-Type: text/x-zim-wiki'):
-                # XX will that work on Win? I should use more general separator IMHO in the whole file rather than '\n'.
-                s = s[s.find("\n\n"):]
+            if p not in InstantSearchPlugin.file_cache:
+                s = p.read_text()  # strip header
+                if s.startswith('Content-Type: text/x-zim-wiki'):
+                    # XX will that work on Win?
+                    # I should use more general separator IMHO in the whole file rather than '\n'.
+                    s = s[s.find("\n\n"):]
+                InstantSearchPlugin.file_cache[p] = s
+            else:
+                s = InstantSearchPlugin.file_cache[p]
 
             matched_links = []
 
@@ -571,6 +579,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         # remove preview pane and show current text editor
         self._hide_preview()
         self.preview_pane.destroy()
+        InstantSearchPlugin.file_cache.clear()  # until next search, pages might change
 
     def _open_original(self):
         self._open_page(Path(self.original_page))
@@ -633,10 +642,16 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             # show preview pane and hide current text editor
             self.last_page_preview = page.name
 
-            try:
-                lines = markup_escape_text(self.window.notebook.layout.map_page(page)[0].read()).splitlines()
-            except newfs.base.FileNotFoundError:
-                lines = [f"page {page} has no content"]  # page has not been created yet
+            local_file = self.window.notebook.layout.map_page(page)[0]
+            path = pathlib.Path(str(local_file))
+            if path in InstantSearchPlugin.file_cache:
+                s = InstantSearchPlugin.file_cache[path]
+            else:
+                try:
+                    s = InstantSearchPlugin.file_cache[path] = local_file.read()
+                except newfs.base.FileNotFoundError:
+                    s = f"page {page} has no content"  # page has not been created yet
+            lines = s.splitlines()
 
             # the file length is very small, prefer to not use preview here
             if self.plugin.preferences['preview_mode'] != InstantSearchPlugin.PREVIEW_ONLY and len(lines) < 50:
@@ -648,8 +663,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             # noinspection PyProtectedMember
             self.window.pageview._hack_hbox.hide()
 
-    @staticmethod
-    def _get_preview_text(lines, query):
+    def _get_preview_text(self, lines, query):
         max_lines = 200
 
         # check if the file is a Zim markup file and if so, skip header
@@ -662,24 +676,42 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         if query.strip() == "":
             return "\n".join(line for line in lines[:max_lines])
 
-        # grep some lines
         # searching for "a" cannot match "&a", since markup_escape_text("&") -> "&apos;"
         # Ignoring q == "b", it would interfere with multiple queries:
         # Ex: query "f b", text "foo", matched with "f" -> "<b>f</b>oo", matched with "b" -> "<<b>b</b>>f</<b>b</b>>"
         query_match = (re.compile("(" + re.escape(q) + ")", re.IGNORECASE) for q in query.split(" ") if q != "b")
-        keep_all = len(lines) < max_lines
-        g = iter(lines)
-        chosen = [next(g)]  # always include header as the first line, even if it does not contain the query
-        for line in g:
+        # too long lines caused strange Gtk behaviour – monitor brightness set to maximum, without any logged warning
+        # so that I decided to put just extract of such long lines in preview
+        # This regex matches query chunk in the line, prepends characters before and after.
+        # When there should be the same query chunk after the first, it stops.
+        # Otherwise, the second chunk might be halved and thus not highlighted.
+        # Ex: query "test", text: "lorem ipsum text dolor text text sit amet consectetur" ->
+        #   ["ipsum text dolor ", "text ", "text sit amet"] (words "lorem" and "consectetur" are strip)
+        line_extract = [re.compile("(.{0,80}" + re.escape(q) + "(?:(?!" + re.escape(q) + ").){0,80})", re.IGNORECASE)
+                        for q in query.split(" ") if q != "b"]
+
+        # grep some lines
+        keep_all = not self.plugin.preferences["preview_short"] and len(lines) < max_lines
+        lines_iter = iter(lines)
+        chosen = [next(lines_iter)]  # always include header as the first line, even if it does not contain the query
+        for line in lines_iter:
             if len(chosen) > max_lines:  # file is too long which would result the preview to not be smooth
                 break
             elif keep_all or any(q in line.lower() for q in query.split(" ")):
                 # keep this line since it contains a query chunk
-                chosen.append(line)
+                if len(line) > 100:
+                    # however, this line is too long to display, try to extract query and its neighbourhood
+                    s = "...".join("...".join(q.findall(line)) for q in line_extract).strip(".")
+                    if not s:  # no query chunk was find on this line, the keep_all is True for sure
+                        chosen.append(line[:100] + "...")
+                    else:
+                        chosen.append("..." + s + "...")
+                else:
+                    chosen.append(line)
         if not keep_all or len(chosen) > max_lines:
             # note that query might not been found, ex: query "foo" would not find line with a bold 'o': "f**o**o"
             chosen.append("...")
-        txt = "\n".join(line for line in chosen)
+        txt = markup_escape_text("\n".join(line for line in chosen))
 
         # bold query chunks in the text
         for q in query_match:

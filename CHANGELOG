@@ -6,6 +6,7 @@
 * external fulltext search
     * internal Zim search dropped
     * wildcard option removed
+    * searched texts are temporarily cached, drastically improving speed
 * geometry fix, stays on position when results are longer than the dialog width
 * page base name is in bold in results
 * good caret behaviour
