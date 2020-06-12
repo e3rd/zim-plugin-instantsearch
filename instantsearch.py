@@ -161,11 +161,18 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.window.pageview.pack_start(self.preview_pane, False, False, 5)
 
         # gui geometry
-        self.geometry(True)
+        self.geometry(init=True)
 
         self.gui.show_all()
 
     def geometry(self, init=False, repeat=True, force=False):
+        if repeat and not init:
+            # I do not know how to catch callback when result list's width is final, so we align several times
+            [GObject.timeout_add(x, lambda: self.geometry(repeat=False, force=force)) for x in (30, 50, 70, 400)]
+            # it is not worthy we continue now because often the Gtk redraw is delayed which would mean
+            # the Dialog dimensions change twice in a row
+            return
+
         px, py = self.window.get_position()
         pw, ph = self.window.get_size()
         if init:
@@ -185,10 +192,6 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         if init or x != x2 or force:
             self.gui.resize(300, 100)
             self.gui.move(x2, y2)
-
-        if repeat:
-            # I do not know how to catch callback when result list's width is final, so we align several times
-            [GObject.timeout_add(x, lambda: self.geometry(repeat=False)) for x in (100, 200, 500)]
 
     def title(self, title=""):
         self.gui.set_title("Search " + title)
@@ -285,12 +288,19 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
                     # ex "te" for "test" is priority, whereas "st" is just fulltext
                     menu[path].in_title = True if score > 9 else False
                     menu[path].path = path
+                    # menu[path].sure = True
 
         if self.state.page_title_only:
             return True
         else:
-            if not self.state.previous:
-                self.process_menu()  # show for now results of title search
+            if not self.state.previous or len(query) == State.start_search_length:
+                # quickly show page title search results before longer fulltext search is ready
+                # Either there is no previous state – query might have been copied into input
+                # or the query is finally long enough to start fulltext search.
+                # It is handy to show out filtered page names before because
+                # it is often use case to jump to queries matched in page names.
+                self.process_menu(ignore_geometry=True)
+
             self.title("..")
             self.timeout = GObject.timeout_add(self.keystroke_delay,
                                                self.start_zim_search)  # ideal delay between keystrokes
@@ -318,9 +328,9 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
         state.is_finished = True
 
-        for item in list(state.menu):  # remove all the items that we didnt encounter during the search
-            if not state.menu[item].sure:
-                del state.menu[item]
+        # for item in list(state.menu):  # remove all the items that we didnt encounter during the search
+        #     if not state.menu[item].sure:
+        #         del state.menu[item]
 
         if state == self.state:
             self.check_last()
@@ -448,9 +458,9 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
                     state.menu[option.name].bonus < 0 and state.menu[option.name].score == 0):
                 changed = True
             o: _MenuItem = state.menu[option.name]
-            if not o.sure:
-                o.sure = True
-                changed = True
+            # if not o.sure:
+            #     o.sure = True
+            #     changed = True
             o.score = results.scores[option]  # includes into options
 
         if changed:  # we added a page
@@ -458,7 +468,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         else:
             pass
 
-    def process_menu(self, state=None, sort=True):
+    def process_menu(self, state=None, sort=True, ignore_geometry=False):
         """ Sort menu and generate items and sout menu. """
         if state is None:
             state = self.state
@@ -476,9 +486,9 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         state.items = [item for item in state.items if (state.menu[item].score + state.menu[item].bonus) > 0]
 
         if state == self.state:
-            self.sout_menu()
+            self.sout_menu(ignore_geometry=ignore_geometry)
 
-    def sout_menu(self, display_immediately=False, caret_move=None):
+    def sout_menu(self, display_immediately=False, caret_move=None, ignore_geometry=False):
         """ Displays menu and handles caret position. """
         if self.timeout_open_page:
             GObject.source_remove(self.timeout_open_page)
@@ -507,7 +517,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         elif self.caret.pos >= len(self.state.items):
             self.caret.pos = 0 if caret_move == 1 else len(self.state.items) - 1
 
-        text = ""
+        text = []
         i = 0
         for item in self.state.items:
             score = self.state.menu[item].score + self.state.menu[item].bonus
@@ -517,12 +527,13 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             s = ":".join(pieces)
             if i == self.caret.pos:
                 self.caret.text = item  # caret is at this position
-                text += f'→ {s} ({score}) {"" if self.state.menu[item].sure else "?"}\n'
+                # text += f'→ {s} ({score}) {"" if self.state.menu[item].sure else "?"}\n'
+                text.append(f'→ {s} ({score})')
             else:
-                text += f'{s} ({score}) {"" if self.state.menu[item].sure else "?"}\n'
+                # text += f'{s} ({score}) {"" if self.state.menu[item].sure else "?"}\n'
+                text.append(f'{s} ({score})')
             i += 1
-        if not text and self.state.is_finished:
-            text = "No result"
+        text = "No result" if not text and self.state.is_finished else "\n".join(text)
 
         self.label_object.set_markup(text)
         self.menu_page = Path(self.caret.text if len(self.state.items) else self.original_page)
@@ -538,7 +549,9 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             self._open_page(self.menu_page)
         # we force here geometry to redraw because often we end up with "No result" page that is very tall
         # because of a many records just hidden
-        self.geometry(force=True)
+
+        if not ignore_geometry:
+            self.geometry(force=True)
 
     def move(self, widget, event):
         """ Move caret up and down. Enter to confirm, Esc closes search."""
@@ -733,7 +746,7 @@ class State:
     _current: "State" = None
     previous: "State"
     title_match_char: str
-    start_search_length: bool
+    start_search_length: int
 
     @classmethod
     def reset(cls):
@@ -770,7 +783,7 @@ class State:
         if self.previous:
             self.menu = deepcopy(self.previous.menu)
             for item in self.menu.values():
-                item.sure = False
+                # item.sure = False
                 item.bonus = item.score = 0
                 item.in_title = False
         else:
@@ -792,6 +805,8 @@ class _MenuItem:
         self.score = 0  # defined by SearchSelection
         self.bonus = 0  # defined locally
         self.in_title = False  # query is in title
-        # XX .sure may be removed? We reset .score now.
-        self.sure = True  # it is certain item is in the list (it may be just a rudiment from last search)
+        # Xit is certain item is in the list – it may be just a rudiment from last search that we want
+        # Xto preserve till certain.
+        # XEx: appending letter "tes" -> "test" will first output all headers ...
+        # self.sure = True
         self.last_order = 0
