@@ -77,6 +77,8 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
     )
 
     file_cache: Dict[pathlib.Path, str] = {}
+    # if search dialog closes, file cached are no longer fresh, might have been changed meanwhile
+    file_cache_fresh = True
 
 
 class InstantSearchMainWindowExtension(MainWindowExtension):
@@ -324,7 +326,36 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         # selection.search(self.query_o, selection=last_sel, callback=self._search_callback(state))
         # self._update_results(selection, state, force=True)
         # self.title("....")
-        self.start_external_search(selection, state)
+
+        # fulltext external search
+        # Loop either all .txt files in the notebook or narrow the search with a previous state
+        if state.previous and state.previous.is_finished and state.previous.matching_files is not None:
+            paths_set = state.previous.matching_files
+            # see below paths_cached_set = (p for p in files_set if p in InstantSearchPlugin.file_cache)
+        else:
+            paths_set = pathlib.Path(str(self.window.notebook.folder)).rglob("*.txt")
+            # see below paths_cached_set = (p for p in InstantSearchPlugin.file_cache)
+        state.matching_files = []
+
+        # This cached search takes about 60 ms, so I let it commented.
+        # However on HDD disks this may boost performance.
+        # We may do an option: "empty cache immediately after close (default)",
+        #                      "search cache first and then do the fresh search (HDD)"
+        #                      "use cache always (empties cache after Zim restart)"
+        #                      "empty cache after 5 minutes"
+        #                      and then prevent to clear the cache in .close().
+        # Or rather we may read file mtime and re-read if only it has been changed since last search.
+        # if not InstantSearchPlugin.file_cache_fresh:
+        #     # Cache might not be fresh but since it is quick, perform quick non-fresh-cached search
+        #     # and then do a fresh search. If we are lucky enough, results will not change.
+        #     # using temporary selection so that files will not received double points for both cached and fresh loop
+        #     selection_temp = SearchSelection(self.window.notebook)
+        #     self.start_external_search(selection_temp, state, paths_cached_set)
+        #     InstantSearchPlugin.file_cache_fresh = True
+        #     InstantSearchPlugin.file_cache.clear()
+        self.start_external_search(selection,
+                                   state,
+                                   paths_set)
 
         state.is_finished = True
 
@@ -338,7 +369,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.process_menu(state=state)
         self.title()
 
-    def start_external_search(self, selection, state: "State"):
+    def start_external_search(self, selection, state: "State", paths):
         """ Zim internal search is not able to find out text with markup.
                  Ex:
                   'economical' is not recognized as 'economi**cal**' (however highlighting works great),
@@ -373,14 +404,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         # regex to identify inner link contents
         link = re.compile(r"\[\[(.*?)\]\]", re.IGNORECASE)  # matches all links "economi[[inserted link]]cal"
 
-        # Loop either all .txt files in the notebook or narrow the search with a previous state
-        if state.previous and state.previous.is_finished and state.previous.matching_files is not None:
-            it = state.previous.matching_files
-        else:
-            it = pathlib.Path(str(self.window.notebook.folder)).rglob("*.txt")
-        state.matching_files = []
-
-        for p in it:
+        for p in paths:
             if p not in InstantSearchPlugin.file_cache:
                 s = p.read_text()  # strip header
                 if s.startswith('Content-Type: text/x-zim-wiki'):
@@ -579,13 +603,13 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         elif key_name == "Escape":
             self._open_original()
             self.is_closed = True  # few more timeouts are on the way probably
-            # no self.close() call needed, GTK emits this itself on Escape
+            self.close()
 
         return
 
     def close(self):
         """ Safely (closes gets called when hit Enter) """
-        if not self.is_closed:
+        if not self.is_closed:  # if hit Esc, GTK has already emitted close itself
             self.is_closed = True
             self.gui.emit("close")
 
@@ -593,6 +617,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self._hide_preview()
         self.preview_pane.destroy()
         InstantSearchPlugin.file_cache.clear()  # until next search, pages might change
+        InstantSearchPlugin.file_cache_fresh = False
 
     def _open_original(self):
         self._open_page(Path(self.original_page))
