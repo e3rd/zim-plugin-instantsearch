@@ -238,13 +238,15 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             return self.process_menu()  # show for now results of title search
 
         # 'te' matches these page titles: 'test' or 'Journal:test' or 'foo test' or 'foo (test)'
-        sub_queries = [re.compile(r"(^|:|\s|\()?" + q, re.IGNORECASE) for q in query.split(" ")]
+        sub_queries_benevolent = [re.compile(r"(^|:|\s|\()?" + q, re.IGNORECASE) for q in query.split(" ")]
+        # 'st' does not match those
+        sub_queries_strict = [re.compile(r"(^|:|\s|\()" + q, re.IGNORECASE) for q in query.split(" ")]
 
         def in_query(txt):
             """ False if any part of the query does not match.
                 If the query is longer >3 characters:
                     * +10 for every query part that matches a title part beginning
-                        Ex: query 'te' -> +3 for these page titles:
+                        Ex: query 'te' -> +10 for these page titles:
                             'test' or 'Journal:test' or 'foo test' or 'foo (test)'
                     * +1 for every query part
                         Ex: query 'st' -> +1 for those page titles
@@ -254,14 +256,15 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
                     False otherwise ('st' for 'test') so that you do not end up messed
                      with page titles, after writing a single letter.
             """
-            arr = (q.search(txt) for q in sub_queries)
             try:
                 if len(query) <= 3:
                     # raises if subquery m does not match or is not at a page chunk beginning
-                    return sum(10 if m.group(1) is not None else None for m in arr)
+                    return sum(10 if m.group(1) is not None else None
+                               for m in (q.search(txt) for q in sub_queries_strict))
                 else:
                     # raises if subquery m does not match
-                    return sum(10 if m.group(1) is not None else 1 for m in arr)
+                    return sum(10 if m.group(1) is not None else 1
+                               for m in (q.search(txt) for q in sub_queries_benevolent))
             except (AttributeError, TypeError):  # one of the sub_queries is not part of the page title
                 return False
 
@@ -269,6 +272,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         it = ((x, x.lower()) for x in list(menu)) if menu else self.cached_titles
         for path, path_low in it:  # quick search in titles
             score = in_query(path_low)
+
             if score:  # 'te' matches 'test' or 'Journal:test' etc
                 # "foo" in "foo:bar", but not in "bar"
                 # when looping "foo:bar", page "foo" receives +1 for having a subpage
@@ -805,6 +809,12 @@ class State:
 
         # we are subset of this state from the longest shorter query
         self.previous = next((State._states[r[:i]] for i in range(len(r), 0, -1) if r[:i] in State._states), None)
+
+        # since having <= 3 letters uses less benevolent searching method, we cannot reduce the next step
+        # ex: "!est" should not match "testing" but "!esti" should
+        if self.previous and self.previous.page_title_only:
+            self.previous = None
+
         if self.previous:
             self.menu = deepcopy(self.previous.menu)
             for item in self.menu.values():
