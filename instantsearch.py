@@ -158,8 +158,17 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         # not sure if this has effect, longer lines without spaces still make window inflate
         self.label_preview.set_line_wrap(True)
         self.label_preview.set_xalign(0)  # align to the left
+        self.label_preview.set_valign(Gtk.Align.START)  # align to the top
         self.preview_pane = Gtk.VBox()
-        self.preview_pane.pack_start(self.label_preview, False, False, 5)
+
+        inner_container = Gtk.ScrolledWindow()
+        inner_container.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
+        inner_container.add(self.label_preview)
+        h = self.window.pageview.textview.get_allocated_height() - 25
+        inner_container.set_min_content_height(h)
+        inner_container.set_max_content_height(h)
+
+        self.preview_pane.pack_start(inner_container, False, False, 5)
         self.window.pageview.pack_start(self.preview_pane, False, False, 5)
 
         # gui geometry
