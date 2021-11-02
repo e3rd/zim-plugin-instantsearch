@@ -15,11 +15,11 @@ from gi.repository import GObject, Gtk, Gdk
 from gi.repository.GLib import markup_escape_text
 from zim import newfs
 from zim.actions import action
-from zim.fs import File
 from zim.gui.mainwindow import MainWindowExtension
 from zim.gui.widgets import Dialog
 from zim.gui.widgets import InputEntry
 from zim.history import HistoryList
+from zim.newfs import LocalFile
 from zim.plugins import PluginClass
 from zim.search import *
 
@@ -113,7 +113,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.keystroke_delay = self.plugin.preferences['keystroke_delay']
 
     # noinspection PyArgumentList,PyUnresolvedReferences
-    @action(_('_Instant search'), accelerator='<ctrl>e')  # T: menu item
+    @action(_('_Instant search'), accelerator='<ctrl>e', menuhints='tools')  # T: menu item
     def instant_search(self):
 
         # init
@@ -439,7 +439,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             txt_links = "".join(matched_links)
 
             if all(query.search(txt_body) or query.search(txt_links) for query in queries):
-                path = self.window.notebook.layout.map_file(File(str(p)))[0]
+                path = self.window.notebook.layout.map_file(LocalFile(str(p)))[0]
 
                 # score = header order * 3 + body match count * 1
                 # if there are '=' equal chars before the query, it is header. The bigger number, the bigger header.

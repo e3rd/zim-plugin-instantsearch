@@ -1,5 +1,6 @@
 # 1.2.1
 * main window resizing fix #46
+* Zim 0.74 support #47
 
 # 1.2 Python3.6 (2021-08-02)
 * CHANGED: Check plugin preferences, some of them (using cache) resets to their defaults.
