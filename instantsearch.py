@@ -4,12 +4,21 @@
 # Search instantly as you type. Edvard Rejthar
 # https://github.com/e3rd/zim-plugin-instantsearch
 #
-import pathlib
+# Note that the search might not work well in case of case-folded letters
+# because re.IGNORECASE seem to perform str.lower only. A fix might be implemented if requested.
+# Use case:
+#   re.match("tsChüß".casefold(), "Tschüß".casefold()) # matches
+#   re.match("tsChüss", "Tschüß", re.IGNORECASE) # does not match
+#
+#
+import logging
+import re
 from collections import defaultdict
 from copy import deepcopy
-from time import time
+from pathlib import Path
+from time import time, perf_counter
 from types import SimpleNamespace
-from typing import Dict, List
+from typing import Dict, List, DefaultDict, NamedTuple, Optional, Union
 
 from gi.repository import GObject, Gtk, Gdk
 from gi.repository.GLib import markup_escape_text
@@ -19,11 +28,22 @@ from zim.gui.mainwindow import MainWindowExtension
 from zim.gui.widgets import Dialog
 from zim.gui.widgets import InputEntry
 from zim.history import HistoryList
-from zim.newfs import LocalFile
+from zim.newfs import LocalFile, File
+from zim.notebook import Path as ZimPath
 from zim.plugins import PluginClass
-from zim.search import *
+from zim.search import Query, SearchSelection
 
 logger = logging.getLogger('zim.plugins.instantsearch')
+
+
+class _FileCache(NamedTuple):
+    path: ZimPath
+    contents: str
+
+
+file_cache: Dict[Path, _FileCache] = {}
+# if search dialog closes, file cached are no longer fresh, might have been changed meanwhile
+file_cache_fresh = True
 
 
 class InstantSearchPlugin(PluginClass):
@@ -76,21 +96,17 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
         ('position', 'choice', _('Popup position'), POSITION_RIGHT, (POSITION_RIGHT, POSITION_CENTER))
     )
 
-    file_cache: Dict[pathlib.Path, str] = {}
-    # if search dialog closes, file cached are no longer fresh, might have been changed meanwhile
-    file_cache_fresh = True
-
 
 class InstantSearchMainWindowExtension(MainWindowExtension):
     gui: "Dialog"
     state: "State"
+    cached_titles: List[str]
 
     def __init__(self, plugin, window):
         super().__init__(plugin, window)
         self.timeout = None
         self.timeout_open_page = None  # will open page after keystroke delay
         self.timeout_open_page_preview = None  # will open page after keystroke delay
-        self.cached_titles = None
         self.last_query = None
         self.query_o = None
         self.caret = None
@@ -117,7 +133,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
     def instant_search(self):
 
         # init
-        self.cached_titles = []
+        self.cached_titles: List[ZimPathStr] = []
         self.last_query = ""  # previous user input
         self.query_o = None
         self.caret = SimpleNamespace(pos=0, text="", stick=False)  # cursor position
@@ -134,9 +150,9 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         # building quick title cache
         def build(start=""):
             o = self.window.notebook.pages
-            for s in o.list_pages(Path(start or ":")):
+            for s in o.list_pages(ZimPath(start or ":")):
                 start2 = (start + ":" if start else "") + s.basename
-                self.cached_titles.append((start2, start2.lower()))
+                self.cached_titles.append(start2)
                 build(start2)
 
         build()
@@ -226,9 +242,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             if self.start_search():
                 self.process_menu()
         else:  # search completed before
-            # update the results if a page has been modified meanwhile
-            # (not if something got deleted in the notebook #16 )
-            self.start_search()
+            # If we would not clear the cache in .close(), we had to reset scores
+            # and re-start search by self.start_search() for the case a page changed meanwhile.
             self.check_last()
             self.sout_menu()
 
@@ -244,68 +259,11 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         menu = self.state.menu
 
         if not query:
-            return self.process_menu()  # show for now results of title search
+            return True
 
-        # 'te' matches these page titles: 'test' or 'Journal:test' or 'foo test' or 'foo (test)'
-        sub_queries_benevolent = [re.compile(r"(^|:|\s|\()?" + q, re.IGNORECASE) for q in query.split(" ")]
-        # 'st' does not match those
-        sub_queries_strict = [re.compile(r"(^|:|\s|\()" + q, re.IGNORECASE) for q in query.split(" ")]
+        SearchController.header_search(query, menu, self.cached_titles)
 
-        def in_query(txt):
-            """ False if any part of the query does not match.
-                If the query is longer >3 characters:
-                    * +10 for every query part that matches a title part beginning
-                        Ex: query 'te' -> +10 for these page titles:
-                            'test' or 'Journal:test' or 'foo test' or 'foo (test)'
-                    * +1 for every query part
-                        Ex: query 'st' -> +1 for those page titles
-
-                If the query is shorter <=3 characters:
-                    +10 for every query part that matches a title part beginning 'te' for 'test'
-                    False otherwise ('st' for 'test') so that you do not end up messed
-                     with page titles, after writing a single letter.
-            """
-            try:
-                if len(query) <= 3:
-                    # raises if subquery m does not match or is not at a page chunk beginning
-                    return sum(10 if m.group(1) is not None else None
-                               for m in (q.search(txt) for q in sub_queries_strict))
-                else:
-                    # raises if subquery m does not match
-                    return sum(10 if m.group(1) is not None else 1
-                               for m in (q.search(txt) for q in sub_queries_benevolent))
-            except (AttributeError, TypeError):  # one of the sub_queries is not part of the page title
-                return False
-
-        # we loop either all cached page titles or menu that should be built from previous superset-query menu
-        it = ((x, x.lower()) for x in list(menu)) if menu else self.cached_titles
-        for path, path_low in it:  # quick search in titles
-            score = in_query(path_low)
-
-            if score:  # 'te' matches 'test' or 'Journal:test' etc
-                # "foo" in "foo:bar", but not in "bar"
-                # when looping "foo:bar", page "foo" receives +1 for having a subpage
-                if all(q in path.lower() for q in query) \
-                        and any(q not in path.lower().split(":")[-1] for q in query):
-                    menu[":".join(path.split(":")[:-1])].bonus += 1  # 1 point for having a subpage
-                    # Normally, zim search gives 11 points bonus if the search-string appears in the titles.
-                    # If we are ignoring sub-pages, the search "foo" will match only page "journal:foo",
-                    # but not "journal:foo:subpage"
-                    # (and score of the parent page will get slightly higher by 1.)
-                    # However, if there are occurrences of the string in the fulltext of the subpage,
-                    # subpage remains in the result, but gets bonus only 2 points (not 11).
-                    # But internal zim search is now disabled.
-                    # menu[path].bonus = -11
-                else:
-                    # 10 points for title (zim default) (so that it gets displayed before search finishes)
-                    menu[path].bonus += score  # will be added to score (score will be reset)
-                    # if score > 9, it means this might be priority match, not fulltext header search
-                    # ex "te" for "test" is priority, whereas "st" is just fulltext
-                    menu[path].in_title = True if score > 9 else False
-                    menu[path].path = path
-                    # menu[path].sure = True
-
-        if self.state.page_title_only:
+        if self.state.page_name_only:
             return True
         else:
             if not self.state.previous or len(query) == State.start_search_length:
@@ -343,10 +301,10 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         # fulltext external search
         # Loop either all .txt files in the notebook or narrow the search with a previous state
         if state.previous and state.previous.is_finished and state.previous.matching_files is not None:
-            paths_set = state.previous.matching_files
+            paths = state.previous.matching_files
             # see below paths_cached_set = (p for p in files_set if p in InstantSearchPlugin.file_cache)
         else:
-            paths_set = (f for f in pathlib.Path(str(self.window.notebook.folder)).rglob("*.txt") if f.is_file())
+            paths = (f for f in Path(str(self.window.notebook.folder)).rglob("*.txt") if f.is_file())
             # see below paths_cached_set = (p for p in InstantSearchPlugin.file_cache)
         state.matching_files = []
 
@@ -366,15 +324,9 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         #     self.start_external_search(selection_temp, state, paths_cached_set)
         #     InstantSearchPlugin.file_cache_fresh = True
         #     InstantSearchPlugin.file_cache.clear()
-        self.start_external_search(selection,
-                                   state,
-                                   paths_set)
+        self.start_external_search(selection, state, paths)
 
         state.is_finished = True
-
-        # for item in list(state.menu):  # remove all the items that we didnt encounter during the search
-        #     if not state.menu[item].sure:
-        #         del state.menu[item]
 
         if state == self.state:
             self.check_last()
@@ -382,7 +334,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.process_menu(state=state)
         self.title()
 
-    def start_external_search(self, selection, state: "State", paths):
+    def start_external_search(self, selection, state: "State", paths: List[Path]):
         """ Zim internal search is not able to find out text with markup.
                  Ex:
                   'economical' is not recognized as 'economi**cal**' (however highlighting works great),
@@ -406,7 +358,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         sub_queries = state.query.split(" ")
 
         # regex to identify in all sub_queries present in the text
-        queries = [re.compile(letter_split(q), re.IGNORECASE) for q in sub_queries]
+        queries = [(q, re.compile(letter_split(q), re.IGNORECASE)) for q in sub_queries]
 
         # regex to identify the very query is present
         exact_query = re.compile(letter_split(state.query), re.IGNORECASE) if len(sub_queries) > 1 else None
@@ -417,16 +369,19 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         # regex to identify inner link contents
         link = re.compile(r"\[\[(.*?)\]\]", re.IGNORECASE)  # matches all links "economi[[inserted link]]cal"
 
-        for p in paths:
-            if p not in InstantSearchPlugin.file_cache:
-                s = p.read_text()  # strip header
-                if s.startswith('Content-Type: text/x-zim-wiki'):
+        start = perf_counter()
+
+        for path in paths:
+            if path not in file_cache:
+                contents = path.read_text()  # strip header
+                if contents.startswith('Content-Type: text/x-zim-wiki'):
                     # XX will that work on Win?
                     # I should use more general separator IMHO in the whole file rather than '\n'.
-                    s = s[s.find("\n\n"):]
-                InstantSearchPlugin.file_cache[p] = s
+                    contents = contents[contents.find("\n\n"):]
+                zim_path = self._path2zim(path)
+                file_cache[path] = _FileCache(zim_path, contents)
             else:
-                s = InstantSearchPlugin.file_cache[p]
+                zim_path, contents = file_cache[path].path, file_cache[path].contents
 
             matched_links = []
 
@@ -435,12 +390,22 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
                 return ""
 
             # pull out links "economi[[inserted link]]cal" -> "economical" + "inserted link"
-            txt_body = link.sub(matched_link, s)
+            txt_body = link.sub(matched_link, contents)
             txt_links = "".join(matched_links)
 
-            if all(query.search(txt_body) or query.search(txt_links) for query in queries):
-                path = self.window.notebook.layout.map_file(LocalFile(str(p)))[0]
+            # wanted terms do not occur in the page name, waiting to be found in the page contents
+            wanted = [(None, reg) for q, reg in queries if q not in str(zim_path).casefold()]
 
+            def found(it):  # whether sub queries are found in the text
+                return (reg.search(txt_body) or reg.search(txt_links) for _, reg in it)
+
+            # Process, if not all query-terms (pieces, words, bits) are found in the page name
+            # and thus the page would be ignored, but all of the remaining terms are found withing the page contents.
+            # Or if all the terms are included in the page name (anywhere in the page name,
+            # it does not have to be in its final part, in the least subpage), process if any of the terms are found
+            # within the page contents as a bonus.
+            if wanted and all(found(wanted)) or not wanted and any(found(queries)):
+                # if remaining and all(reg.search(txt_body) or reg.search(txt_links) for reg in remaining):
                 # score = header order * 3 + body match count * 1
                 # if there are '=' equal chars before the query, it is header. The bigger number, the bigger header.
                 # Header 5 corresponds to 3 points, Header 1 to 7 points.
@@ -451,14 +416,24 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
                 # noinspection PyProtectedMember
                 # score might be zero because we are not re-checking against txt_links matches
-                selection._count_score(path, score or 1)
-                state.matching_files.append(p)
+                selection._count_score(zim_path, score or 1)
+                state.matching_files.append(path)
+            elif not wanted:
+                # The page is not eligible for fulltext search now. However, a term (part of the query) may appear
+                # that will render the page thrown up from the page name search alone
+                # but is included in the page contents.
+                # Use case:
+                # Step 1: Query "linux foo" matches page "Linux:foo" while neither term is in the page contents ('bar').
+                # Step 2: Query "linux foo b" matches page "Linux:foo" because 'bar' is in the page contents.
+                state.matching_files.append(path)
+
+        logger.info("[Instantsearch] External search: %g s", perf_counter() - start)
         self._update_results(selection, state, force=True)
 
     def check_last(self):
         """ opens the page if there is only one option in the menu """
         if len(self.state.menu) == 1 and self.plugin.preferences['open_when_unique']:
-            self._open_page(Path(list(self.state.menu)[0]), exclude_from_history=False)
+            self._open_page(ZimPath(list(self.state.menu)[0]), exclude_from_history=False)
             self.close()
         elif not len(self.state.menu):
             self._open_original()
@@ -492,13 +467,11 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
         for option in results.scores:
             if option.name not in state.menu or (
-                    state.menu[option.name].bonus < 0 and state.menu[option.name].score == 0):
+                    state.menu[option.name].page_score < 0 and state.menu[option.name].score == 0):
                 changed = True
             o: _MenuItem = state.menu[option.name]
-            # if not o.sure:
-            #     o.sure = True
-            #     changed = True
             o.score = results.scores[option]  # includes into options
+            o.path = option.name
 
         if changed:  # we added a page
             self.process_menu(state=state, sort=False)
@@ -511,16 +484,21 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             state = self.state
 
         if sort:
-            state.items = sorted(state.menu, reverse=True, key=lambda item: (
-                state.menu[item].in_title, state.menu[item].score + state.menu[item].bonus, -item.count(":"), item))
+            state.items = sorted(state.menu.values(), reverse=True, key=lambda item: (
+                item.page_highlight, item.score + item.page_score, -item.path.count(":"), item.path))
         else:
-            # when search results are being updated, it's good when the order doesnt change all the time.
+            # when search results are being updated, it's good when the order does not change all the time.
             # So that the first result does not become for a while 10th and then become first back.
-            state.items = sorted(state.menu, reverse=True,
-                                 key=lambda item: (state.menu[item].in_title, -state.menu[item].last_order))
+            state.items = sorted(state.menu.values(), reverse=True,
+                                 key=lambda item: (item.page_highlight, -item.last_order))
 
-        # I do not know why there are items with score 0 if internal Zim search used
-        state.items = [item for item in state.items if (state.menu[item].score + state.menu[item].bonus) > 0]
+        # Items appear only if they have score either from the page contents or the page name search.
+        # And if the score comes from the page name search only, page_insufficient must be True
+        # (at least one term appears in the least subpage name).
+        # Note: I do not know why there are items with score 0 if internal Zim search used
+        state.items = [page for page in state.items if
+                       (page.score or not page.page_insufficient)
+                       and (page.score + page.page_score) > 0]
 
         if state == self.state:
             self.sout_menu(ignore_geometry=ignore_geometry)
@@ -546,7 +524,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             self.caret.stick = self.caret.pos != 0
         elif self.state.items and self.caret.stick:
             # identify current caret position, depending on the text
-            self.caret.pos = next((i for i, item in enumerate(self.state.items) if item == self.caret.text), 0)
+            self.caret.pos = next((i for i, item in enumerate(self.state.items) if item.path == self.caret.text), 0)
         # treat possible caret deflection
         if self.caret.pos < 0:
             # place the caret to the beginning or the end of list
@@ -555,25 +533,21 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             self.caret.pos = 0 if caret_move == 1 else len(self.state.items) - 1
 
         text = []
-        i = 0
-        for item in self.state.items:
-            score = self.state.menu[item].score + self.state.menu[item].bonus
-            self.state.menu[item].last_order = i
-            pieces = item.split(":")
+        for i, page in enumerate(self.state.items):
+            score = page.score + page.page_score
+            page.last_order = i
+            pieces = page.path.split(":")
             pieces[-1] = f"<b>{pieces[-1]}</b>"
             s = ":".join(pieces)
             if i == self.caret.pos:
-                self.caret.text = item  # caret is at this position
-                # text += f'→ {s} ({score}) {"" if self.state.menu[item].sure else "?"}\n'
+                self.caret.text = page.path  # caret is at this position
                 text.append(f'→ {s} ({score})')
             else:
-                # text += f'{s} ({score}) {"" if self.state.menu[item].sure else "?"}\n'
                 text.append(f'{s} ({score})')
-            i += 1
         text = "No result" if not text and self.state.is_finished else "\n".join(text)
 
         self.label_object.set_markup(text)
-        self.menu_page = Path(self.caret.text if len(self.state.items) else self.original_page)
+        self.menu_page = ZimPath(self.caret.text if len(self.state.items) else self.original_page)
 
         if not display_immediately:
             if self.plugin.preferences['preview_mode'] != InstantSearchPlugin.PREVIEW_ONLY:
@@ -629,11 +603,10 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         # remove preview pane and show current text editor
         self._hide_preview()
         self.preview_pane.destroy()
-        InstantSearchPlugin.file_cache.clear()  # until next search, pages might change
-        InstantSearchPlugin.file_cache_fresh = False
+        file_cache.clear()  # until next search, pages might change
 
     def _open_original(self):
-        self._open_page(Path(self.original_page))
+        self._open_page(ZimPath(self.original_page))
         # we already have HistoryPath objects in the self.original_history, we cannot add them in the constructor
         # XX I do not know what is that good for
         hl = HistoryList([])
@@ -676,7 +649,10 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         # noinspection PyProtectedMember
         self.window.pageview._hack_hbox.show()
 
-    def _open_page_preview(self, page):
+    def _path2zim(self, path: Path) -> ZimPath:
+        return self.window.notebook.layout.map_file(LocalFile(str(path)))[0]
+
+    def _open_page_preview(self, page: ZimPath):
         """ Open preview which is far faster then loading and
          building big parse trees into text editor buffer when opening page. """
         # note: if the dialog is already closed, we do not want a preview to open, but page still can be open
@@ -693,13 +669,14 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             # show preview pane and hide current text editor
             self.last_page_preview = page.name
 
-            local_file = self.window.notebook.layout.map_page(page)[0]
-            path = pathlib.Path(str(local_file))
-            if path in InstantSearchPlugin.file_cache:
-                s = InstantSearchPlugin.file_cache[path]
+            local_file: File = self.window.notebook.layout.map_page(page)[0]
+            path = Path(str(local_file))
+            if path in file_cache:
+                s = file_cache[path].contents
             else:
                 try:
-                    s = InstantSearchPlugin.file_cache[path] = local_file.read()
+                    s = local_file.read()
+                    file_cache[path] = _FileCache(self._path2zim(path), s)
                 except newfs.base.FileNotFoundError:
                     s = f"page {page} has no content"  # page has not been created yet
             lines = s.splitlines()
@@ -777,14 +754,15 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
 
 class State:
-    matching_files: List[pathlib.Path] or None  # None if state search has not been started
+    matching_files: Optional[List[Path]]  # None if state search has not been started
     # the cache is held till the end of zim process. I dont know if it poses a problem
     # after hours of use and intensive searching.
     _states: Dict[str, "State"] = {}
     _current: "State" = None
-    previous: "State"
+    previous: Optional["State"]
     title_match_char: str
     start_search_length: int
+    page_name_only: bool
 
     @classmethod
     def reset(cls):
@@ -809,48 +787,125 @@ class State:
         return State._states[query.lower()]
 
     def __init__(self, raw_query):
-        # Xassert raw_query != ""
-        self.items = []
+        self.items: List[_MenuItem] = []
         self.is_finished = False
         self.raw_query = r = raw_query  # including '!' sign for title only search
         self.first_seen = True
-        self.matching_files = None
 
         # we are subset of this state from the longest shorter query
         self.previous = next((State._states[r[:i]] for i in range(len(r), 0, -1) if r[:i] in State._states), None)
 
         # since having <= 3 letters uses less benevolent searching method, we cannot reduce the next step
         # ex: "!est" should not match "testing" but "!esti" should
-        if self.previous and self.previous.page_title_only:
+        if self.previous and self.previous.page_name_only:
             self.previous = None
 
         if self.previous:
             self.menu = deepcopy(self.previous.menu)
-            for item in self.menu.values():
-                # item.sure = False
-                item.bonus = item.score = 0
-                item.in_title = False
+            [item.reset_score() for item in self.menu.values()]
         else:
-            self.menu = defaultdict(_MenuItem)
+            self.menu: Menu = defaultdict(_MenuItem)
 
         # check if we query page titles only, based on the special '!' sign in the query text
         # first char is "!" -> searches in page name only
-        self.page_title_only, self.query = (True, raw_query[len(State.title_match_char):].lower()) \
+        self.page_name_only, self.query = (True, raw_query[len(State.title_match_char):].lower()) \
             if raw_query.startswith(State.title_match_char) \
             else (False, raw_query)
         if len(self.query) < State.start_search_length:
-            self.page_title_only = True
+            self.page_name_only = True  # search only in page names, not in page contents
 
 
 class _MenuItem:
 
     def __init__(self):
-        self.path: Path = None
-        self.score = 0  # defined by SearchSelection
-        self.bonus = 0  # defined locally
-        self.in_title = False  # query is in title
-        # Xit is certain item is in the list – it may be just a rudiment from last search that we want
-        # Xto preserve till certain.
-        # XEx: appending letter "tes" -> "test" will first output all headers ...
-        # self.sure = True
+        self.path: Optional[ZimPathStr] = None
+        self.score = 0  # score given by SearchSelection (page contents search)
+        self.page_score = 0  # score from the page name search
+        self.page_highlight = False  # page name search priority match (query term is not in the middle of the word)
         self.last_order = 0
+
+        # None of the query terms is in the least subpage name. Such results may appear only
+        # if some of the term is found in the page context too. But the page search is insufficient.
+        self.page_insufficient = False
+
+    def reset_score(self):
+        """ The item has been just copied from a previous state to narrow down the search.
+            However, score will be re-counted. """
+        self.page_score = self.score = 0
+        self.page_highlight = False
+
+
+ZimPathStr = str  # may serve as an argument to the ZimPath constructor
+Menu = DefaultDict[ZimPathStr, _MenuItem]
+
+
+class SearchController:
+    @staticmethod
+    def header_search(query: str, menu: Menu, cached_titles: List[ZimPathStr]) -> None:
+        # 'te' matches these page titles: 'test' or 'Journal:test' or 'foo test' or 'foo (test)'
+        sub_queries_benevolent = [re.compile(r"(^|:|\s|\()?" + q, re.IGNORECASE) for q in query.split(" ")]
+        # 'st' does not match those
+        sub_queries_strict = [re.compile(r"(^|:|\s|\()" + q, re.IGNORECASE) for q in query.split(" ")]
+
+        def in_query(txt) -> Union[int, bool]:
+            """ False if any part of the query does not match.
+                If the query is longer >3 characters:
+                    * +10 for every query part that matches a title part beginning
+                        Ex: query 'te' -> +10 for these page titles:
+                            'test' or 'Journal:test' or 'foo test' or 'foo (test)'
+                    * +1 for every query part
+                        Ex: query 'st' -> +1 for those page titles
+
+                If the query is shorter <=3 characters:
+                    +10 for every query part that matches a title part beginning 'te' for 'test'
+                    False otherwise ('st' for 'test') so that you do not end up messed
+                     with page titles, after writing a single letter.
+            """
+            try:
+                if len(query) <= 3:
+                    # raises if subquery m does not match or is not at a page chunk beginning
+                    return sum(10 if m.group(1) is not None else None
+                               for m in (q.search(txt) for q in sub_queries_strict))
+                else:
+                    # raises if subquery m does not match
+                    return sum(10 if m.group(1) is not None else 1
+                               for m in (q.search(txt) for q in sub_queries_benevolent))
+            except (AttributeError, TypeError):  # one of the sub_queries is not part of the page title
+                return False
+
+        # we loop either all cached page titles or menu that should be built from previous superset-query menu
+        for path in list(menu) or cached_titles:  # quick search in titles
+            path_lower = path.casefold()
+            path_end = path_lower[path_lower.rfind(":") + 1:]
+            score = in_query(path_lower)
+
+            if score:  # 'te' matches 'test' or 'Journal:test' etc
+                # "foo" in "foo:bar", but not in "bar"
+                # when looping "foo:bar", page "foo" receives +1 for having a subpage
+                # if all(q in path.lower() for q in query) \
+                #         and any(q not in path.lower().split(":")[-1] for q in query):
+                # menu[":".join(path.split(":")[:-1])].bonus += 1  # 1 point for having a subpage
+
+                # Normally, zim search gives 11 points bonus if the search-string appears in the titles.
+                # If we are ignoring sub-pages, the search "foo" will match only page "journal:foo",
+                # but not "journal:foo:subpage"
+                # (and score of the parent page will get slightly higher by 1.)
+                # However, if there are occurrences of the string in the fulltext of the subpage,
+                # subpage remains in the result, but gets bonus only 2 points (not 11).
+                # But internal zim search is now disabled.
+                # menu[path].bonus = -11
+
+                # 10 points for title (zim default) (so that it gets displayed before the search finishes)
+                m = menu[path]
+                m.page_score += score  # will be added to score (score will be reset)
+                # if score > 9, it means this might be priority match, not fulltext page name search
+                # ex "te" for "test" is priority, whereas "st" is just fulltext
+                m.page_highlight = True if score > 9 else False
+                m.path = path
+
+                if not any(q in path_end for q in query.split()):
+                    m.page_insufficient = True
+                else:
+                    m.page_insufficient = False
+            else:  # remove the item from menu if it was there before
+                menu.pop(path, None)
