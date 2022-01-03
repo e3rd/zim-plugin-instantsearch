@@ -1,5 +1,7 @@
 # 1.3 (unreleased)
 * part of the query might be divided between the page name and the page contents search #45
+* search state is remembered (Ctrl+E will show last results)
+* license info
 
 # 1.2.1
 * main window resizing fix #46

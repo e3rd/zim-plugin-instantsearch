@@ -90,8 +90,8 @@ You can walk through by UP/DOWN arrow, hit Enter to stay on the page, or Esc to 
         ('ignore_subpages', 'bool', _("Ignore sub-pages (if ignored, search 'linux'"
                                       " would return page:linux but not page:linux:subpage"
                                       " (if in the subpage, there is no occurrence of string 'linux')"), True),
-        ('is_cached', 'bool',
-         _("Cache results of a search to be used in another search. (Till the end of zim process.)"), True),
+        # ('is_cached', 'bool',
+        #  _("Cache results of a search to be used in another search. (Till the end of zim process.)"), True),
         ('open_when_unique', 'bool', _('When only one page is found, open it automatically.'), True),
         ('position', 'choice', _('Popup position'), POSITION_RIGHT, (POSITION_RIGHT, POSITION_CENTER))
     )
@@ -121,6 +121,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.label_preview = None
         self.preview_pane = None
         self._last_update = 0
+        self.state = None
+        self.caret = SimpleNamespace(pos=0, text="", stick=False)  # cursor position
 
         # preferences
         State.title_match_char = self.plugin.preferences['title_match_char']
@@ -136,13 +138,12 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.cached_titles: List[ZimPathStr] = []
         self.last_query = ""  # previous user input
         self.query_o = None
-        self.caret = SimpleNamespace(pos=0, text="", stick=False)  # cursor position
         self.original_page = self.window.page.name  # we return here after escape
         self.original_history = list(self.window.history.uistate["list"])
         self.selection = None
-        if not self.plugin.preferences['is_cached']:
+        # if not self.plugin.preferences['is_cached']:
             # reset last search results
-            State.reset()
+            # State.reset()
         self.menu_page = None
         self.is_closed = False
         self.last_page = None
@@ -191,6 +192,11 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.geometry(init=True)
 
         self.gui.show_all()
+
+        if self.state:
+            self.input_entry.set_text(self.state.raw_query)
+            self.input_entry.select_region(0, -1)
+            self.change(None)
 
     def geometry(self, init=False, repeat=True, force=False):
         if repeat and not init:
