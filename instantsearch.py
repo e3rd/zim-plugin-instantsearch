@@ -379,7 +379,13 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
         for path in paths:
             if path not in file_cache:
-                contents = path.read_text()  # strip header
+                try:
+                    contents = path.read_text(encoding='UTF-8') 
+                except UnicodeDecodeError as err:
+                    # Ignore file an skip to next path
+                    logger.warning("Skipping path %s due to invalid character encoding error: %s", path, err)
+                    continue 
+                # strip header
                 if contents.startswith('Content-Type: text/x-zim-wiki'):
                     # XX will that work on Win?
                     # I should use more general separator IMHO in the whole file rather than '\n'.
