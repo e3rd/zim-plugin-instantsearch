@@ -380,7 +380,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         for path in paths:
             if path not in file_cache:
                 try:
-                    contents = path.read_text(encoding='UTF-8') 
+                    contents = path.read_text(encoding='UTF-8', errors='replace') 
                 except UnicodeDecodeError as err:
                     # Ignore file an skip to next path
                     logger.warning("Skipping path %s due to invalid character encoding error: %s", path, err)
@@ -418,13 +418,13 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             # within the page contents as a bonus.
             if wanted and all(found(wanted)) or not wanted and any(found(queries)):
                 # if remaining and all(reg.search(txt_body) or reg.search(txt_links) for reg in remaining):
-                # score = header order * 3 + body match count * 1
+                # score = header order * 3 + body match count * 1 
                 # if there are '=' equal chars before the query, it is header. The bigger number, the bigger header.
-                # Header 5 corresponds to 3 points, Header 1 to 7 points.
+                # Header 5 corresponds to 3 points, Header 1 to 7 points. XX it seems Header 5 ~ 3 points, Header 1 ~ 15 points. Might be more IMHO, like * 5 instead of * 3.
                 score = sum([len(m.group(1)) * 3 if m.group(1) else 1
                              for q in header_queries for m in q.finditer(txt_body)])
                 if exact_query:  # there are sub-queries, we favourize full-match
-                    score += 50 * len(exact_query.findall(txt_body))
+                    score += 100 * len(exact_query.findall(txt_body))
 
                 # noinspection PyProtectedMember
                 # score might be zero because we are not re-checking against txt_links matches
