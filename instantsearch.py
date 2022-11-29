@@ -310,7 +310,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             paths = state.previous.matching_files
             # see below paths_cached_set = (p for p in files_set if p in InstantSearchPlugin.file_cache)
         else:
-            paths = (f for f in Path(str(self.window.notebook.folder)).rglob("*.txt") if f.is_file())
+            extension = "*" + self.window.notebook.config["Notebook"]["default_file_extension"]  # ex: "*.txt"
+            paths = (f for f in Path(str(self.window.notebook.folder)).rglob(extension) if f.is_file())
             # see below paths_cached_set = (p for p in InstantSearchPlugin.file_cache)
         state.matching_files = []
 
