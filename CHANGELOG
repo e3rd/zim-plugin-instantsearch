@@ -1,9 +1,11 @@
-# 1.3 (unreleased)
+# 1.3 (2022-12-15)
 * part of the query might be divided between the page name and the page contents search #45
 * search state is remembered (Ctrl+E will show last results)
 * license info
+* fix: open_when_unique parameter would not make the dialog re-close immediately any more
+* fix: notebook located at the Windows drive root
 
-# 1.2.1
+# 1.2.1 (2021-11-02)
 * main window resizing fix #46
 * Zim 0.74 support #47
 

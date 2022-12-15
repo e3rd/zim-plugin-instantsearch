@@ -12,6 +12,7 @@
 #
 #
 import logging
+from os.path import abspath
 import re
 from collections import defaultdict
 from copy import deepcopy
@@ -22,13 +23,12 @@ from typing import Dict, List, DefaultDict, NamedTuple, Optional, Union
 
 from gi.repository import GObject, Gtk, Gdk
 from gi.repository.GLib import markup_escape_text
-from zim import newfs
 from zim.actions import action
-from zim.gui.mainwindow import MainWindowExtension
+from zim.gui.mainwindow import MainWindow, MainWindowExtension
 from zim.gui.widgets import Dialog
 from zim.gui.widgets import InputEntry
 from zim.history import HistoryList
-from zim.newfs import LocalFile, File
+from zim.newfs import base, File, LocalFile
 from zim.notebook import Path as ZimPath
 from zim.plugins import PluginClass
 from zim.search import Query, SearchSelection
@@ -101,6 +101,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
     gui: "Dialog"
     state: "State"
     cached_titles: List[str]
+    window: MainWindow
+    prevent_closing = False  # if `open_when_unique` is active, having single query in the result would immediately re-close the dialog
 
     def __init__(self, plugin, window):
         super().__init__(plugin, window)
@@ -194,9 +196,11 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.gui.show_all()
 
         if self.state:
+            self.prevent_closing = True
             self.input_entry.set_text(self.state.raw_query)
             self.input_entry.select_region(0, -1)
             self.change(None)
+            self.prevent_closing = False
 
     def geometry(self, init=False, repeat=True, force=False):
         if repeat and not init:
@@ -311,7 +315,20 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
             # see below paths_cached_set = (p for p in files_set if p in InstantSearchPlugin.file_cache)
         else:
             extension = "*" + self.window.notebook.config["Notebook"]["default_file_extension"]  # ex: "*.txt"
-            paths = (f for f in Path(str(self.window.notebook.folder)).rglob(extension) if f.is_file())
+            # Why the slash "/" after the notebook folder? #51
+            # If the notebook sits on the root dir in Windows, joining the notebook path "G:"
+            # and the rglob produces path like "G:file.txt" which is a perfectly valid Windows path.
+            # Missing slash means relative CWD on the drive G in Windows system
+            # but Zim seems not to be aware of such a strange Windows behaviour. Hence, putting it into
+            # self.window.notebook.layout.map_file / base.FilePath.relpath gives ValueError 'Not a parent path G:'.
+            # Resolving files to the absolute paths by `f.resolve()` might fail as well because the drive G:
+            # may point to another folder like C:\mount, and C:\mount\file.txt is not under the notebook parent
+            # path "G:" as well.
+            # The best solution is to force the notebook folder to have the slash to be sure we get such
+            # half-absolute paths.
+            # It's IMHO the bug of the Zim that it does not include trailing slash which is ok till the dir
+            # is the root drive, while the path reported becomes relative ("G:" – relative to CWD on G, "G:\\" – absolute).
+            paths = (f for f in Path(abspath(str(self.window.notebook.folder))).rglob(extension) if f.is_file())            
             # see below paths_cached_set = (p for p in InstantSearchPlugin.file_cache)
         state.matching_files = []
 
@@ -447,7 +464,8 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         """ opens the page if there is only one option in the menu """
         if len(self.state.menu) == 1 and self.plugin.preferences['open_when_unique']:
             self._open_page(ZimPath(list(self.state.menu)[0]), exclude_from_history=False)
-            self.close()
+            if not self.prevent_closing:
+                self.close()
         elif not len(self.state.menu):
             self._open_original()
 
@@ -661,7 +679,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
         self.preview_pane.hide()
         # noinspection PyProtectedMember
         self.window.pageview._hack_hbox.show()
-
+    
     def _path2zim(self, path: Path) -> ZimPath:
         return self.window.notebook.layout.map_file(LocalFile(str(path)))[0]
 
@@ -690,7 +708,7 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
                 try:
                     s = local_file.read()
                     file_cache[path] = _FileCache(self._path2zim(path), s)
-                except newfs.base.FileNotFoundError:
+                except base.FileNotFoundError:
                     s = f"page {page} has no content"  # page has not been created yet
             lines = s.splitlines()
 
