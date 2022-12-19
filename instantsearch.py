@@ -212,22 +212,22 @@ class InstantSearchMainWindowExtension(MainWindowExtension):
 
         px, py = self.window.get_position()
         pw, ph = self.window.get_size()
+        init_w, init_h = 300, 100
         if init:
             x, y = None, None
-            w, h = 300, 100
+            w, h = init_w, init_h
         else:
             x, y = self.gui.get_position()
             w, h = self.gui.get_allocated_width(), self.gui.get_allocated_height()
         if self.plugin.preferences['position'] == InstantSearchPlugin.POSITION_RIGHT:
-            x2, y2 = pw - w, 0
+            x2, y2 = px + pw - w, py
         elif self.plugin.preferences['position'] == InstantSearchPlugin.POSITION_CENTER:
             x2, y2 = px + (pw / 2) - w / 2, py + (ph / 2) - 250
-
         else:
             raise AttributeError("Instant search: Wrong position preference.")
 
         if init or x != x2 or force:
-            self.gui.resize(300, 100)
+            self.gui.resize(init_w, init_h)
             self.gui.move(x2, y2)
 
     def title(self, title=""):
